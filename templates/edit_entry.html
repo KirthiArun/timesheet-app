@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Edit Timesheet Entry</h1>
+        <p>Update show, work code, hours, or notes.</p>
+    </div>
+</div>
+
+<div class="form-panel">
+    <form method="POST" class="grid-form">
+        <div>
+            <label>Date</label>
+            <input type="date" name="work_date" value="{{ entry.work_date }}" required>
+        </div>
+
+        <div>
+            <label>Show Code</label>
+            <select name="show_id" id="show_id" required>
+                {% for s in shows %}
+                <option value="{{ s.show_id }}" {% if s.show_id == entry.show_id %}selected{% endif %}>
+                    {{ s.year }} - {{ s.show_code }} - {{ s.show_name }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div>
+            <label>Work Code</label>
+            <select name="work_code_id" id="work_code_id" required>
+                {% for code in work_codes %}
+                <option value="{{ code.work_code_id }}" {% if code.work_code_id == entry.work_code_id %}selected{% endif %}>
+                    {{ code.code }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div>
+            <label>Hours</label>
+            <input type="number" name="hours" step="0.25" min="0.25" max="24" value="{{ entry.hours }}" required>
+        </div>
+
+        <div class="full">
+            <label>Notes / Description</label>
+            <textarea name="comments" rows="3">{{ entry.comments }}</textarea>
+        </div>
+
+        <button type="submit">Update Entry</button>
+        <a class="button-light" href="{{ url_for('timesheet') }}">Cancel</a>
+    </form>
+</div>
+
+<script>
+document.getElementById("show_id").addEventListener("change", function() {
+    const showId = this.value;
+    fetch(`/api/work-codes/${showId}`)
+        .then(response => response.json())
+        .then(data => {
+            const workSelect = document.getElementById("work_code_id");
+            workSelect.innerHTML = "";
+            data.work_codes.forEach(w => {
+                const opt = document.createElement("option");
+                opt.value = w.work_code_id;
+                opt.textContent = w.code;
+                workSelect.appendChild(opt);
+            });
+        });
+});
+</script>
+{% endblock %}

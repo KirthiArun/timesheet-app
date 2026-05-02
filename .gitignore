@@ -1,0 +1,9 @@
+service_account.json
+timesheet.db
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.env
+*.egg-info/
+dist/

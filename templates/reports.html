@@ -1,0 +1,258 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-header">
+    <div>
+        <h1>Reports</h1>
+        <p>View missing entries, detailed logs, and export data.</p>
+    </div>
+</div>
+
+{# ── Quick Period Buttons ── #}
+<div class="report-quick-bar">
+    <a class="quick-btn {% if report_type == 'weekly' %}active{% endif %}"
+       href="{{ url_for('reports', report_type='weekly') }}">📅 This Week</a>
+    <a class="quick-btn {% if report_type == 'monthly' %}active{% endif %}"
+       href="{{ url_for('reports', report_type='monthly') }}">📆 This Month</a>
+    <a class="quick-btn" href="{{ url_for('reports', report_type='custom') }}">🔍 Custom Range</a>
+    {% if from_date %}
+    <a class="quick-btn export-btn"
+       href="{{ url_for('export_report', report_type=report_type, from_date=from_date, to_date=to_date, user_id=request.args.get('user_id',''), show_id=request.args.get('show_id',''), work_code_id=request.args.get('work_code_id','')) }}">
+       ⬇ Export CSV
+    </a>
+    {% endif %}
+</div>
+
+{# ── Custom Filter Form ── #}
+<div class="form-panel" id="customFilter"
+     style="{% if report_type != 'custom' %}display:none;{% endif %}">
+    <h2 style="margin-bottom:14px;">Custom Filter</h2>
+    <form method="GET" class="grid-form">
+        <input type="hidden" name="report_type" value="custom">
+        <div>
+            <label>From Date</label>
+            <input type="date" name="from_date" value="{{ from_date }}">
+        </div>
+        <div>
+            <label>To Date</label>
+            <input type="date" name="to_date" value="{{ to_date }}">
+        </div>
+        <div>
+            <label>User</label>
+            <select name="user_id">
+                <option value="">All Users</option>
+                {% for u in users %}
+                <option value="{{ u.user_id }}"
+                    {% if request.args.get('user_id') == u.user_id|string %}selected{% endif %}>
+                    {{ u.name }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label>Show</label>
+            <select name="show_id">
+                <option value="">All Shows</option>
+                {% for s in shows %}
+                <option value="{{ s.show_id }}"
+                    {% if request.args.get('show_id') == s.show_id|string %}selected{% endif %}>
+                    {{ s.year }} - {{ s.show_code }} - {{ s.show_name }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label>Work Code</label>
+            <select name="work_code_id">
+                <option value="">All Codes</option>
+                {% for c in codes %}
+                <option value="{{ c.work_code_id }}"
+                    {% if request.args.get('work_code_id') == c.work_code_id|string %}selected{% endif %}>
+                    {{ c.code }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-end;">
+            <button type="submit" style="flex:1;">Run</button>
+            <a class="button-light"
+               href="{{ url_for('export_report', report_type='custom', from_date=from_date, to_date=to_date) }}"
+               style="flex:1;text-align:center;">⬇ CSV</a>
+        </div>
+    </form>
+</div>
+
+{% if from_date %}
+<p class="period-label">
+    Showing: <strong>{{ from_date }}</strong> → <strong>{{ to_date }}</strong>
+    {% if report_type != 'custom' %}&nbsp;·&nbsp;
+    <a href="{{ url_for('export_report', report_type=report_type, from_date=from_date, to_date=to_date) }}"
+       style="color:#4a86e8;font-weight:600;">⬇ Download CSV</a>
+    {% endif %}
+</p>
+{% endif %}
+
+{# ── Missing Entries Panel ── #}
+{% if from_date %}
+<div class="panel">
+    <h2>
+        {% if missing_report %}
+        ⚠ Missing / Incomplete — {{ missing_report|length }} user{% if missing_report|length != 1 %}s{% endif %}
+        {% else %}
+        ✓ All Complete
+        {% endif %}
+    </h2>
+
+    {% if missing_report %}
+    {% for u in missing_report %}
+    <div class="user-missing-block">
+        <button class="accordion-button" onclick="toggleInner('missing{{ loop.index }}')">
+            <span>{{ u.name }}</span>
+            <span class="missing-pill">{{ u.total_missing }} hrs missing</span>
+        </button>
+        <div class="user-days" id="missing{{ loop.index }}">
+            <table>
+                <thead><tr><th>Day</th><th>Date</th><th>Logged</th><th>Missing</th></tr></thead>
+                <tbody>
+                    {% for d in u.missing_days %}
+                    <tr>
+                        <td>{{ d.day_name }}</td>
+                        <td>{{ d.date }}</td>
+                        <td>{{ d.entered }} hrs</td>
+                        <td style="color:#d32f2f;font-weight:bold;">{{ d.missing }} hrs</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <p style="color:#43a047;font-weight:600;">All team members have complete entries for this period.</p>
+    {% endif %}
+</div>
+{% endif %}
+
+{# ── Summary Table ── #}
+{% if summary %}
+<div class="panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <h2 style="margin:0;border:none;padding:0;">Hours Summary</h2>
+    </div>
+    <table>
+        <thead>
+            <tr><th>User</th><th>Show</th><th>Work Code</th><th>Total Hours</th></tr>
+        </thead>
+        <tbody>
+            {% for s in summary %}
+            <tr>
+                <td>{{ s.name }}</td>
+                <td><span class="badge dark">{{ s.show_code or "-" }}</span>
+                    <span style="font-size:12px;color:#666;">{{ s.show_name or "" }}</span></td>
+                <td><span class="badge">{{ s.code }}</span></td>
+                <td><strong>{{ s.total_hours }}</strong></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4" style="color:#aaa;text-align:center;">No summary data.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{# ── Detailed Log ── #}
+{% if entries %}
+<div class="panel">
+    <h2>Detailed Log</h2>
+    <table>
+        <thead>
+            <tr><th>User</th><th>Date</th><th>Show</th><th>Work Code</th><th>Hours</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+            {% for e in entries %}
+            <tr>
+                <td>{{ e.name }}</td>
+                <td style="white-space:nowrap;">{{ e.work_date }}</td>
+                <td>
+                    <span class="badge dark">{{ e.show_code or "-" }}</span>
+                    <span style="font-size:12px;color:#666;">{{ e.show_name or "" }}</span>
+                </td>
+                <td><span class="badge">{{ e.code }}</span></td>
+                <td>{{ e.hours }}</td>
+                <td style="font-size:13px;color:#555;">{{ e.comments }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if not from_date %}
+<div class="panel" style="text-align:center;color:#aaa;padding:40px;">
+    <p style="font-size:16px;">Select a period above to view the report.</p>
+</div>
+{% endif %}
+
+<style>
+.report-quick-bar {
+    display:flex;
+    gap:10px;
+    flex-wrap:wrap;
+    margin-bottom:20px;
+}
+.quick-btn {
+    display:inline-block;
+    padding:9px 18px;
+    border-radius:6px;
+    font-size:14px;
+    font-weight:600;
+    text-decoration:none;
+    background:#fff;
+    color:#555;
+    border:1px solid #dde1ea;
+    transition:background 0.15s, color 0.15s;
+    cursor:pointer;
+}
+.quick-btn:hover { background:#f0f4ff; color:#4a86e8; border-color:#4a86e8; }
+.quick-btn.active { background:#4a86e8; color:#fff; border-color:#4a86e8; }
+.quick-btn.export-btn { background:#e8f5e9; color:#2e7d32; border-color:#a5d6a7; margin-left:auto; }
+.quick-btn.export-btn:hover { background:#c8e6c9; }
+
+.period-label {
+    font-size:13px;
+    color:#666;
+    margin-bottom:16px;
+    background:#f5f7fa;
+    padding:10px 16px;
+    border-radius:6px;
+}
+
+.missing-pill {
+    background:#ffebee;
+    color:#d32f2f;
+    font-size:12px;
+    font-weight:700;
+    padding:2px 10px;
+    border-radius:12px;
+    margin-left:10px;
+}
+</style>
+
+<script>
+function toggleInner(id) {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle("show-panel");
+}
+
+// Show custom filter if custom mode
+const reportType = "{{ report_type }}";
+if (reportType === "custom") {
+    document.getElementById("customFilter").style.display = "block";
+}
+document.querySelector('a[href*="report_type=custom"]')?.addEventListener("click", function(e) {
+    e.preventDefault();
+    const el = document.getElementById("customFilter");
+    el.style.display = el.style.display === "none" ? "block" : "none";
+});
+</script>
+{% endblock %}

@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>My Timesheet</h1>
+        <p>All fields are required. Log hours per show and work code.</p>
+    </div>
+</div>
+
+<div class="form-panel">
+    <form id="timesheetForm" class="timesheet-form">
+        <div class="form-row-top">
+            <div class="field-date">
+                <label>Date <span class="req">*</span></label>
+                <input type="date" name="work_date" id="work_date" value="{{ today }}" required>
+            </div>
+            <div class="field-show">
+                <label>Show <span class="req">*</span></label>
+                <select name="show_id" id="show_id" required>
+                    <option value="">— Select a show —</option>
+                    {% for s in shows %}
+                    <option value="{{ s.show_id }}">{{ s.year }} - {{ s.show_code }} - {{ s.show_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="field-workcode">
+                <label>Work Code <span class="req">*</span></label>
+                <select name="work_code_id" id="work_code_id" required>
+                    <option value="">— Select —</option>
+                    {% for code in work_codes %}
+                    <option value="{{ code.work_code_id }}">{{ code.code }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="field-hours">
+                <label>Hours <span class="req">*</span></label>
+                <input type="number" name="hours" id="hours" step="0.25" min="0.25" max="24" placeholder="8" required>
+            </div>
+        </div>
+
+        <div class="form-row-notes">
+            <label>Notes / Description <span class="req">*</span></label>
+            <textarea name="comments" id="comments" rows="2"
+                placeholder="Required — briefly describe what you worked on" required></textarea>
+        </div>
+
+        <div class="form-row-submit">
+            <button type="submit" id="saveBtn">Save Entry</button>
+            <div id="savingIndicator" style="display:none;align-items:center;gap:8px;color:#4a86e8;font-size:14px;font-weight:600;">
+                <div class="spinner"></div> Saving…
+            </div>
+            <span id="formError" class="form-error" style="display:none;"></span>
+        </div>
+    </form>
+</div>
+
+<div class="panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <h2 style="margin:0;border:none;padding:0;">My Entries</h2>
+        <a class="button-light" href="{{ url_for('weekly') }}" style="font-size:13px;padding:7px 14px;">Weekly View →</a>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>Date</th><th>Show</th><th>Work Code</th><th>Hours</th>
+                <th>Notes</th><th>Status</th><th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for e in entries %}
+            <tr>
+                <td style="white-space:nowrap;">{{ e.work_date }}</td>
+                <td>
+                    <span class="badge dark">{{ e.show_code or "-" }}</span>
+                    <span style="font-size:12px;color:#666;">{{ e.show_name or "" }}</span>
+                </td>
+                <td><span class="badge">{{ e.code }}</span></td>
+                <td>{{ e.hours }}</td>
+                <td style="font-size:13px;color:#555;max-width:200px;">{{ e.comments }}</td>
+                <td>
+                    {% if is_locked(e.work_date) %}
+                    <span class="locked">🔒 Locked</span>
+                    {% else %}
+                    <span class="open">✓ Open</span>
+                    {% endif %}
+                </td>
+                <td style="white-space:nowrap;">
+                    {% if not is_locked(e.work_date) %}
+                    <a class="action-link" href="{{ url_for('edit_entry', entry_id=e.entry_id) }}">Edit</a>
+                    <a class="danger-link" href="{{ url_for('delete_entry', entry_id=e.entry_id) }}"
+                       onclick="return confirm('Delete this entry?')">Delete</a>
+                    {% else %}—{% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7" style="text-align:center;color:#aaa;padding:24px;">No entries yet.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<style>
+.req { color:#d32f2f; }
+.timesheet-form { display:flex; flex-direction:column; gap:14px; }
+.form-row-top {
+    display:grid;
+    grid-template-columns: 150px 1fr 170px 120px;
+    gap:12px;
+    align-items:end;
+}
+.form-row-notes { display:flex; flex-direction:column; gap:6px; }
+.form-row-notes textarea { resize:vertical; }
+.form-row-submit { display:flex; align-items:center; gap:14px; padding-top:4px; }
+.form-error { color:#d32f2f; font-size:13px; font-weight:600; }
+.spinner {
+    width:16px; height:16px;
+    border:2px solid #c5d8f8;
+    border-top-color:#4a86e8;
+    border-radius:50%;
+    animation:spin 0.7s linear infinite;
+    display:inline-block;
+}
+@keyframes spin { to { transform:rotate(360deg); } }
+@media (max-width:900px) {
+    .form-row-top { grid-template-columns:1fr 1fr; }
+    .field-show   { grid-column:1 / -1; }
+}
+</style>
+
+<script>
+document.getElementById("show_id").addEventListener("change", function () {
+    if (!this.value) return;
+    fetch(`/api/work-codes/${this.value}`)
+        .then(r => r.json())
+        .then(data => {
+            const sel = document.getElementById("work_code_id");
+            sel.innerHTML = '<option value="">— Select —</option>';
+            data.work_codes.forEach(w => {
+                const opt = document.createElement("option");
+                opt.value = w.work_code_id;
+                opt.textContent = w.code;
+                sel.appendChild(opt);
+            });
+        });
+});
+
+document.getElementById("timesheetForm").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    const errEl = document.getElementById("formError");
+    errEl.style.display = "none";
+
+    const checks = [
+        [document.getElementById("work_date").value.trim(),    "Date is required."],
+        [document.getElementById("show_id").value.trim(),      "Please select a Show."],
+        [document.getElementById("work_code_id").value.trim(), "Please select a Work Code."],
+        [document.getElementById("hours").value.trim(),        "Hours is required."],
+        [document.getElementById("comments").value.trim(),     "Notes are required."],
+    ];
+
+    for (const [val, msg] of checks) {
+        if (!val) { showError(msg); return; }
+    }
+
+    const saveBtn   = document.getElementById("saveBtn");
+    const indicator = document.getElementById("savingIndicator");
+    saveBtn.disabled = true;
+    saveBtn.style.opacity = "0.5";
+    indicator.style.display = "flex";
+
+    try {
+        const res = await fetch("/timesheet", { method:"POST", body:new FormData(this) });
+        if (res.redirected) { window.location.href = res.url; }
+        else { window.location.reload(); }
+    } catch {
+        saveBtn.disabled = false;
+        saveBtn.style.opacity = "1";
+        indicator.style.display = "none";
+        showError("Network error — please try again.");
+    }
+});
+
+function showError(msg) {
+    const el = document.getElementById("formError");
+    el.textContent = msg;
+    el.style.display = "inline";
+}
+</script>
+{% endblock %}

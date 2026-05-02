@@ -1,0 +1,322 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="dashboard-top">
+    <div>
+        <h1>Dashboard</h1>
+        <p>Hello, <strong>{{ session.get("name") }}</strong> &nbsp;·&nbsp; Week of {{ week_start }} – {{ week_end }}</p>
+    </div>
+    <div class="top-right-tools">
+        <div class="datetime-box" id="currentDateTime">{{ current_datetime }}</div>
+        <div class="notification-wrapper">
+            <button type="button" class="bell-button" onclick="toggleNotifications()">
+                🔔
+                {% if notification_count and notification_count > 0 %}
+                <span class="bell-count">{{ notification_count }}</span>
+                {% endif %}
+            </button>
+            <div class="notification-dropdown" id="notificationDropdown">
+                <h3>Notifications</h3>
+                {% for n in notifications %}
+                <div class="notice">
+                    <strong>{{ n.notification_type|title }}</strong>
+                    <p>{{ n.message }}</p>
+                    <small>{{ n.created_at }}</small>
+                </div>
+                {% else %}
+                <p style="color:#aaa;font-size:13px;">No notifications.</p>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
+{# ── ADMIN VIEW ──────────────────────────────────────────── #}
+{% if session.get("role") == "admin" %}
+
+<div class="cards">
+    <div class="card">
+        <span>Total Hours Logged</span>
+        <strong>{{ total_hours }}</strong>
+    </div>
+    <div class="card clickable-card" onclick="togglePanel('adminMissingPanel')">
+        <span>Missing This Week</span>
+        <strong style="color:{% if admin_missing_users|length > 0 %}#d32f2f{% else %}#43a047{% endif %}">
+            {{ admin_missing_users|length }} user{% if admin_missing_users|length != 1 %}s{% endif %}
+        </strong>
+        <p>Click to expand</p>
+    </div>
+    <div class="card clickable-card" onclick="togglePanel('adminMissingMonthPanel')">
+        <span>Missing This Month</span>
+        <strong style="color:{% if admin_missing_month|length > 0 %}#d32f2f{% else %}#43a047{% endif %}">
+            {{ admin_missing_month|length }} user{% if admin_missing_month|length != 1 %}s{% endif %}
+        </strong>
+        <p>Click to expand</p>
+    </div>
+    <div class="card" style="cursor:pointer;" onclick="window.location='{{ url_for('reports', report_type='weekly') }}'">
+        <span>Weekly Report</span>
+        <strong style="font-size:18px;">→</strong>
+        <p>View &amp; export</p>
+    </div>
+    <div class="card" style="cursor:pointer;" onclick="window.location='{{ url_for('reports', report_type='monthly') }}'">
+        <span>Monthly Report</span>
+        <strong style="font-size:18px;">→</strong>
+        <p>View &amp; export</p>
+    </div>
+</div>
+
+<div class="panel" id="adminMissingPanel" style="display:none;">
+    <h2>Users Missing Hours This Week</h2>
+    {% for user in admin_missing_users %}
+    <div class="user-missing-block">
+        <button class="accordion-button" onclick="toggleInner('userDays{{ user.user_id }}')">
+            {{ user.name }}
+            <span style="color:#d32f2f;margin-left:8px;">{{ user.missing }} hrs missing</span>
+            <span style="color:#aaa;font-size:12px;margin-left:8px;">{{ user.entered }}/40 logged</span>
+        </button>
+        <div class="user-days" id="userDays{{ user.user_id }}">
+            <table>
+                <thead><tr><th>Day</th><th>Date</th><th>Logged</th><th>Missing</th></tr></thead>
+                <tbody>
+                    {% for d in user.days %}
+                    <tr>
+                        <td>{{ d.day_name }}</td>
+                        <td>{{ d.date }}</td>
+                        <td>{{ d.entered }} hrs</td>
+                        <td style="color:{% if d.missing > 0 %}#d32f2f{% else %}#43a047{% endif %};font-weight:bold;">
+                            {% if d.missing > 0 %}{{ d.missing }} hrs short{% else %}✓{% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% else %}
+    <p style="color:#43a047;font-weight:600;">✓ All team members are on track this week.</p>
+    {% endfor %}
+</div>
+<div class="panel" id="adminMissingMonthPanel" style="display:none;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <h2 style="margin:0;border:none;padding:0;">Missing Hours — This Month</h2>
+        <a href="{{ url_for('reports', report_type='monthly') }}"
+           class="button-light" style="font-size:13px;padding:7px 14px;">Full Report →</a>
+    </div>
+    {% if admin_missing_month %}
+    <table>
+        <thead>
+            <tr><th>Name</th><th>Logged</th><th>Missing</th></tr>
+        </thead>
+        <tbody>
+            {% for u in admin_missing_month %}
+            <tr>
+                <td>{{ u.name }}</td>
+                <td>{{ u.logged }} hrs</td>
+                <td style="color:#d32f2f;font-weight:bold;">{{ u.missing }} hrs short</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color:#43a047;font-weight:600;">✓ All team members are on track this month.</p>
+    {% endif %}
+</div>
+
+{# ── USER VIEW ───────────────────────────────────────────── #}
+{% else %}
+
+{# Week progress bar #}
+{% set pct = ((pending_summary.entered / 40) * 100) | round | int %}
+<div class="week-status-bar">
+    <div class="week-status-header">
+        <div>
+            <span class="week-label">This Week's Progress</span>
+            <span class="week-hours">{{ pending_summary.entered }} / 40 hrs</span>
+        </div>
+        <a href="{{ url_for('timesheet') }}" class="button-link" style="font-size:13px;padding:7px 16px;">+ Log Hours</a>
+    </div>
+    <div class="progress-track">
+        <div class="progress-fill {% if pct >= 100 %}complete{% elif pct >= 50 %}partial{% else %}low{% endif %}"
+             style="width:{{ [pct, 100]|min }}%"></div>
+    </div>
+    <div class="progress-label">
+        {% if pending_summary.missing == 0 %}
+        ✓ All hours complete for this week!
+        {% else %}
+        {{ pending_summary.missing }} hrs still needed
+        {% endif %}
+    </div>
+</div>
+
+{# Day cards — click to quick-fill #}
+<div class="day-status-grid">
+    {% for d in pending_summary.days %}
+    <div class="day-status-card {% if d.missing == 0 %}day-complete{% elif d.entered > 0 %}day-partial{% else %}day-empty{% endif %}"
+         {% if d.missing > 0 %}onclick="quickFill('{{ d.date }}')" title="Click to log hours for {{ d.day_name }}"{% endif %}>
+        <div class="day-name">{{ d.day_name }}</div>
+        <div class="day-date">{{ d.date }}</div>
+        <div class="day-hours">{{ d.entered }} hrs</div>
+        <div class="day-status-label">
+            {% if d.missing == 0 %}✓ Complete
+            {% elif d.entered > 0 %}+{{ d.missing }} needed
+            {% else %}Not logged{% endif %}
+        </div>
+        {% if d.missing > 0 %}<div class="day-action">Tap to fill →</div>{% endif %}
+    </div>
+    {% endfor %}
+</div>
+
+{% endif %}
+
+{# ── RECENT ENTRIES ──────────────────────────────────────── #}
+<div class="panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <h2 style="margin:0;border:none;padding:0;">Recent Entries</h2>
+        {% if session.get("role") != "admin" %}
+        <a class="button-light" href="{{ url_for('timesheet') }}" style="font-size:13px;padding:7px 14px;">View All →</a>
+        {% endif %}
+    </div>
+
+    {% for group in grouped_recent_entries %}
+    <div class="date-group">
+        <h3>{{ group.date }}</h3>
+        <table>
+            <thead>
+                <tr>
+                    {% if session.get("role") == "admin" %}<th>User</th>{% endif %}
+                    <th>Show</th><th>Work Code</th><th>Hours</th><th>Notes</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for e in group.entries %}
+                <tr>
+                    {% if session.get("role") == "admin" %}<td>{{ e.name }}</td>{% endif %}
+                    <td>
+                        <span class="badge dark">{{ e.show_code or "-" }}</span>
+                        <span style="font-size:12px;color:#666;">{{ e.show_name or "" }}</span>
+                    </td>
+                    <td><span class="badge">{{ e.code }}</span></td>
+                    <td>{{ e.hours }}</td>
+                    <td style="font-size:13px;color:#555;">{{ e.comments }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p style="color:#aaa;text-align:center;padding:24px;">No entries yet this week.</p>
+    {% endfor %}
+</div>
+
+<style>
+/* Week status bar */
+.week-status-bar {
+    background:#fff;
+    border-radius:10px;
+    padding:20px 24px;
+    margin-bottom:20px;
+    box-shadow:0 1px 4px rgba(0,0,0,0.08);
+}
+.week-status-header {
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    margin-bottom:12px;
+}
+.week-label  { font-size:13px; color:#888; font-weight:600; display:block; }
+.week-hours  { font-size:26px; font-weight:700; color:#1a2236; display:block; }
+.progress-track {
+    height:10px;
+    background:#f0f0f0;
+    border-radius:10px;
+    overflow:hidden;
+}
+.progress-fill {
+    height:100%;
+    border-radius:10px;
+    transition:width 0.4s ease;
+}
+.progress-fill.complete { background:#43a047; }
+.progress-fill.partial  { background:#ff9800; }
+.progress-fill.low      { background:#ef5350; }
+.progress-label { font-size:13px; color:#888; margin-top:8px; }
+
+/* Day status grid */
+.day-status-grid {
+    display:grid;
+    grid-template-columns:repeat(5, 1fr);
+    gap:12px;
+    margin-bottom:24px;
+}
+.day-status-card {
+    background:#fff;
+    border-radius:10px;
+    padding:16px 12px;
+    text-align:center;
+    box-shadow:0 1px 4px rgba(0,0,0,0.08);
+    border-top:4px solid #ddd;
+    transition:box-shadow 0.15s, transform 0.1s;
+}
+.day-status-card.day-empty,
+.day-status-card.day-partial {
+    cursor:pointer;
+    border-top-color:#ef5350;
+}
+.day-status-card.day-partial  { border-top-color:#ff9800; }
+.day-status-card.day-complete { border-top-color:#43a047; }
+.day-status-card:hover.day-empty,
+.day-status-card:hover.day-partial {
+    box-shadow:0 4px 14px rgba(239,83,80,0.2);
+    transform:translateY(-2px);
+}
+.day-name   { font-size:12px; font-weight:700; color:#888; text-transform:uppercase; letter-spacing:0.5px; }
+.day-date   { font-size:11px; color:#bbb; margin:3px 0 8px; }
+.day-hours  { font-size:22px; font-weight:700; color:#1a2236; }
+.day-status-label { font-size:12px; margin-top:4px; color:#888; }
+.day-complete .day-status-label { color:#43a047; }
+.day-empty   .day-status-label { color:#ef5350; }
+.day-partial .day-status-label { color:#ff9800; }
+.day-action { font-size:11px; color:#4a86e8; margin-top:6px; font-weight:600; }
+</style>
+
+<script>
+function toggleNotifications() {
+    document.getElementById("notificationDropdown").classList.toggle("show");
+}
+
+document.addEventListener("click", function (e) {
+    const wrapper = document.querySelector(".notification-wrapper");
+    if (wrapper && !wrapper.contains(e.target)) {
+        document.getElementById("notificationDropdown").classList.remove("show");
+    }
+});
+
+function togglePanel(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.style.display = el.style.display === "none" ? "block" : "none";
+}
+
+function toggleInner(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.toggle("show-panel");
+}
+
+// Quick-fill: redirect to timesheet with date pre-selected
+function quickFill(date) {
+    window.location.href = `/timesheet?prefill_date=${date}`;
+}
+
+function updateDateTime() {
+    const now = new Date();
+    const el  = document.getElementById("currentDateTime");
+    if (el) el.textContent = now.toLocaleString([], {
+        weekday:"long", year:"numeric", month:"long",
+        day:"2-digit", hour:"2-digit", minute:"2-digit", second:"2-digit"
+    });
+}
+updateDateTime();
+setInterval(updateDateTime, 1000);
+</script>
+{% endblock %}

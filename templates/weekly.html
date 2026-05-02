@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Weekly View</h1>
+        <p>{{ monday }} to {{ sunday }} <span class="muted">(Mon-Fri only)</span></p>
+    </div>
+    <div>
+        <a class="button-light" href="{{ url_for('weekly', week=prev_week) }}">Previous Week</a>
+        <a class="button-link" href="{{ url_for('weekly', week=next_week) }}">Next Week</a>
+    </div>
+</div>
+
+<div class="weekly-grid">
+    {% for d in days %}
+    <div class="day-card {{ d.status_class }}">
+        <h3>{{ d.day_name }}</h3>
+        <p>{{ d.date }}</p>
+        <strong>{{ d.total }} hrs</strong>
+        <span>{{ d.status }}</span>
+        {% if d.locked %}
+        <small>Locked</small>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+
+<div class="panel">
+    <h2>Entries for Selected Week</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Show</th>
+                <th>Work Code</th>
+                <th>Hours</th>
+                <th>Notes</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for e in entries %}
+            <tr>
+                <td>{{ e.work_date }}</td>
+                <td><span class="badge dark">{{ e.show_code or "-" }}</span> {{ e.show_name or "" }}</td>
+                <td><span class="badge">{{ e.code }}</span></td>
+                <td>{{ e.hours }}</td>
+                <td>{{ e.comments }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5">No entries for this week.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

@@ -1,0 +1,301 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="login-wrap">
+    <div class="login-left">
+        <div class="login-left-content">
+            <img src="{{ url_for('static', filename='z-circle.png') }}" class="brand-logo" alt="Zydesoft">
+            <h2 class="brand-tagline">Hours Log</h2>
+            <p class="brand-sub">The work you don't log didn't happen.</p>
+            <div class="login-dots">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="login-right">
+        <div class="login-box">
+            <div class="login-header">
+    <div class="clock-icon">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="12" cy="12" r="10" stroke="#4a86e8" stroke-width="1.5"/>
+            <path d="M12 6v6l4 2" stroke="#4a86e8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+    </div>                
+    <h1>Welcome back</h1>
+                    <p>Sign in to your timesheet account</p>
+            </div>
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="alert {{ category }}">{{ message }}</div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+
+            <form method="POST" class="login-form">
+                <div class="input-group">
+                    <label for="email">Email address</label>
+                    <input type="email" id="email" name="email"
+                           placeholder="you@csireg.com" required autocomplete="email">
+                </div>
+
+                <div class="input-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password"
+                           placeholder="••••••••••" required autocomplete="current-password">
+                </div>
+
+                <button type="submit" class="login-btn">Sign in →</button>
+            </form>
+
+            <div class="login-footer">
+                <span class="lock-icon">🔒</span>
+                Forgot your password? Contact your admin at
+                <a href="mailto:sivanraj@zydesoft.com">sivanraj@zydesoft.com</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+/* Override login-content to be full screen */
+.login-content {
+    padding: 0 !important;
+    align-items: stretch !important;
+    min-height: 100vh;
+    width: 100%;
+}
+
+.login-wrap {
+    display: flex;
+    min-height: 100vh;
+    width: 100%;
+}
+
+/* Left panel */
+.login-left {
+    flex: 1;
+    background: #1a2236;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 40px;
+    position: relative;
+    overflow: hidden;
+}
+
+/* Subtle grid pattern */
+.login-left::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+        linear-gradient(rgba(74,134,232,0.07) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(74,134,232,0.07) 1px, transparent 1px);
+    background-size: 40px 40px;
+}
+
+/* Glowing orb */
+.login-left::after {
+    content: "";
+    position: absolute;
+    width: 400px;
+    height: 400px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(74,134,232,0.15) 0%, transparent 70%);
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+}
+
+.login-left-content {
+    position: relative;
+    z-index: 1;
+    text-align: center;
+}
+
+.brand-logo {
+    width: 220px;
+    margin-bottom: 12px;
+    filter: drop-shadow(0 4px 24px rgba(74,134,232,0.3));
+}
+
+.brand-tagline {
+    font-family: 'Georgia', serif;
+    font-size: 28px;
+    color: #fff;
+    font-weight: 400;
+    letter-spacing: 6px;
+    text-transform: uppercase;
+    margin: 0 0 12px;
+    opacity: 0.9;
+}
+
+.brand-sub {
+    color: rgba(255,255,255,0.45);
+    font-size: 14px;
+    letter-spacing: 0.5px;
+    line-height: 1.6;
+    max-width: 240px;
+    margin: 0 auto 32px;
+}
+
+.login-dots {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+}
+
+.login-dots span {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: rgba(74,134,232,0.4);
+    animation: pulse 1.4s ease-in-out infinite;
+}
+.login-dots span:nth-child(1) { background: #4a86e8; animation-delay: 0s; }
+.login-dots span:nth-child(2) { animation-delay: 0.2s; }
+.login-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes pulse {
+    0%, 100% { transform: scale(1);   opacity: 0.4; }
+    50%       { transform: scale(1.6); opacity: 1;   }
+}
+
+/* Right panel */
+.login-right {
+    width: 460px;
+    background: #f4f6f9;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 40px;
+}
+
+.login-box {
+    width: 100%;
+    max-width: 360px;
+}
+
+.login-header {
+    text-align: center;
+    margin-bottom: 32px;
+}
+
+.clock-icon {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 14px;
+}
+.clock-icon svg {
+    width: 48px;
+    height: 48px;
+    animation: tick 2s ease-in-out infinite;
+    filter: drop-shadow(0 2px 8px rgba(74,134,232,0.3));
+}
+
+@keyframes tick {
+    0%, 100% { transform: rotate(-5deg); }
+    50%       { transform: rotate(5deg); }
+}
+
+.login-header h1 {
+    font-size: 26px;
+    font-weight: 700;
+    color: #1a2236;
+    margin: 0 0 6px;
+}
+
+.login-header p {
+    font-size: 14px;
+    color: #888;
+    margin: 0;
+}
+
+.login-form {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.input-group label {
+    font-size: 12px;
+    font-weight: 700;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+}
+
+.input-group input {
+    padding: 12px 14px;
+    border: 1.5px solid #e0e4ed;
+    border-radius: 8px;
+    font-size: 15px;
+    background: #fff;
+    color: #1a2236;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.input-group input:focus {
+    outline: none;
+    border-color: #4a86e8;
+    box-shadow: 0 0 0 3px rgba(74,134,232,0.12);
+}
+
+.input-group input::placeholder { color: #bbb; }
+
+.login-btn {
+    margin-top: 4px;
+    padding: 13px;
+    background: #1a2236;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    letter-spacing: 0.5px;
+    transition: background 0.2s, transform 0.1s;
+}
+
+.login-btn:hover {
+    background: #4a86e8;
+    transform: translateY(-1px);
+}
+
+.login-btn:active { transform: translateY(0); }
+
+.login-footer {
+    margin-top: 28px;
+    text-align: center;
+    font-size: 12.5px;
+    color: #aaa;
+    line-height: 1.7;
+}
+
+.login-footer .lock-icon { margin-right: 4px; }
+
+.login-footer a {
+    color: #4a86e8;
+    text-decoration: none;
+    font-weight: 600;
+}
+.login-footer a:hover { text-decoration: underline; }
+
+/* Responsive */
+@media (max-width: 768px) {
+    .login-left  { display: none; }
+    .login-right { width: 100%; padding: 40px 24px; }
+}
+</style>
+
+{% endblock %}
