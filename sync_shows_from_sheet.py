@@ -16,6 +16,10 @@ from googleapiclient.discovery import build
 from google.oauth2.service_account import Credentials
 import sqlite3
 
+import os, base64, json
+from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
+
 SERVICE_ACCOUNT_FILE = "service_account.json"
 MASTER_SHEET_ID      = "1ENTP8XLLoFISNwLvF5Z7mM6X-ycYcOAERvcyoQ-dqhk"
 SHOW_LIST_TAB        = "_ShowList"
@@ -28,8 +32,15 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 
 
 def get_sheets_service():
-    creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+    b64 = os.environ.get("GOOGLE_CREDENTIALS_B64", "")
+    if b64:
+        info  = json.loads(base64.b64decode(b64).decode("utf-8"))
+        creds = Credentials.from_service_account_info(info, scopes=SCOPES)
+    else:
+        # Local fallback — reads from file
+        creds = Credentials.from_service_account_file("service_account.json", scopes=SCOPES)
     return build("sheets", "v4", credentials=creds)
+
 
 
 def fetch_shows_from_showlist():

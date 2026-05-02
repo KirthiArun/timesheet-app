@@ -26,7 +26,7 @@ APP_WORK_CODES = [
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "be-kind-you-never-know-what-the-other-person-is-going-through")
-DB_NAME = "timesheet.db"
+DB_NAME = os.environ.get("DB_PATH", "timesheet.db")
 
 # Google Sheets sync — enabled only when service_account.json exists
 SHEETS_SYNC_ENABLED = os.path.exists("service_account.json")
@@ -1157,6 +1157,9 @@ def admin_reset_password(user_id):
 def admin_generate_password():
     return {"password": generate_password()}
 
+with app.app_context():
+    init_db()
+    
 if __name__ == "__main__":
     init_db()
     app.run(debug=True, host="0.0.0.0", port=5000)
