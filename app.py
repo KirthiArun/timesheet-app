@@ -29,7 +29,8 @@ app.secret_key = os.environ.get("FLASK_SECRET_KEY", "be-kind-you-never-know-what
 DB_NAME = os.environ.get("DB_PATH", "timesheet.db")
 
 # Google Sheets sync — enabled only when service_account.json exists
-SHEETS_SYNC_ENABLED = os.path.exists("service_account.json")
+SHEETS_SYNC_ENABLED = os.path.exists("service_account.json") or bool(os.environ.get("GOOGLE_CREDENTIALS_B64", ""))
+
 if SHEETS_SYNC_ENABLED:
     try:
         from sheets_sync import sync_user_to_sheet
