@@ -29,6 +29,7 @@
 {% endif %}
 
 <main class="{% if session.get('user_id') %}content{% else %}login-content{% endif %}">
+    {% if request.endpoint != 'login' %}
     {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
             {% for category, message in messages %}
@@ -36,6 +37,7 @@
             {% endfor %}
         {% endif %}
     {% endwith %}
+    {% endif %}
     {% block content %}{% endblock %}
 </main>
 </body>

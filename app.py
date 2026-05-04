@@ -1,22 +1,23 @@
 from flask import Flask, render_template, request, redirect, url_for, session, flash, Response
 from werkzeug.security import generate_password_hash, check_password_hash
-import sqlite3
 from datetime import datetime, date, timedelta
-import csv
-from io import StringIO
 from functools import wraps
-import os
-import smtplib
+from io import StringIO
+import csv, os, secrets, string, smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from dotenv import load_dotenv
 load_dotenv()
 
 try:
-    from authlib.integrations.flask_client import OAuth
-    AUTHLIB_AVAILABLE = True
-except Exception:
-    AUTHLIB_AVAILABLE = False
+    import psycopg2
+    import psycopg2.extras
+except ImportError:
+    psycopg2 = None
+
+import sqlite3
+
+# ── App + DB config ───────────────────────────────────────────────────────────
 
 APP_WORK_CODES = [
     'EAAEP', 'EAALU', 'EACRO', 'EADATST', 'EADMT',
@@ -24,12 +25,20 @@ APP_WORK_CODES = [
     'OTTRAIN', 'PRWS', 'QATEST', 'SHAWS', 'Vacation'
 ]
 
+VACATION_NOTIFY_EMAILS = ["kirthika@zydesoft.com", "sivanraj@zydesoft.com"]
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "be-kind-you-never-know-what-the-other-person-is-going-through")
-DB_NAME = os.environ.get("DB_PATH", "timesheet.db")
 
-# Google Sheets sync — enabled only when service_account.json exists
-SHEETS_SYNC_ENABLED = os.path.exists("service_account.json") or bool(os.environ.get("GOOGLE_CREDENTIALS_B64", ""))
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+DB_NAME      = os.environ.get("DB_PATH", "timesheet.db")
+
+# ── Google Sheets sync ────────────────────────────────────────────────────────
+
+SHEETS_SYNC_ENABLED = (
+    os.path.exists("service_account.json") or
+    bool(os.environ.get("GOOGLE_CREDENTIALS_B64", ""))
+)
 
 if SHEETS_SYNC_ENABLED:
     try:
@@ -40,128 +49,178 @@ if SHEETS_SYNC_ENABLED:
         print(f"[App] Sheets sync import failed: {e}")
         SHEETS_SYNC_ENABLED = False
 else:
-    print("[App] service_account.json not found — running without Google Sheets sync.")
-
-oauth  = None
-google = None
-
-if AUTHLIB_AVAILABLE:
-    oauth  = OAuth(app)
-    google = oauth.register(
-        name="google",
-        client_id=os.environ.get("GOOGLE_CLIENT_ID"),
-        client_secret=os.environ.get("GOOGLE_CLIENT_SECRET"),
-        server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-        client_kwargs={"scope": "openid email profile"},
-    )
+    print("[App] No credentials found — running without Google Sheets sync.")
 
 
 # ── DB Helpers ────────────────────────────────────────────────────────────────
 
 def get_db():
+    if DATABASE_URL:
+        conn = psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+        return conn
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
     return conn
 
 
+def db_execute(conn, sql, params=()):
+    """Unified execute — swaps ? for %s on PostgreSQL."""
+    if DATABASE_URL:
+        sql = sql.replace("?", "%s")
+        cur = conn.cursor()
+        cur.execute(sql, params)
+        return cur
+    return conn.execute(sql, params)
+
+
 def column_exists(conn, table_name, column_name):
+    if DATABASE_URL:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = %s AND column_name = %s
+        """, (table_name, column_name))
+        return cur.fetchone() is not None
     rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
     return any(row["name"] == column_name for row in rows)
+
+
+def get_placeholder():
+    return "%s" if DATABASE_URL else "?"
 
 
 def init_db():
     conn = get_db()
     cur  = conn.cursor()
 
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS users (
-        user_id       INTEGER PRIMARY KEY AUTOINCREMENT,
-        name          TEXT NOT NULL,
-        email         TEXT UNIQUE NOT NULL,
-        password      TEXT,
-        role          TEXT NOT NULL CHECK(role IN ('admin', 'user')),
-        auth_provider TEXT NOT NULL DEFAULT 'local'
-    )""")
-
-    if not column_exists(conn, "users", "auth_provider"):
-        cur.execute("ALTER TABLE users ADD COLUMN auth_provider TEXT NOT NULL DEFAULT 'local'")
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS shows (
-        show_id    INTEGER PRIMARY KEY AUTOINCREMENT,
-        year       TEXT NOT NULL,
-        show_code  TEXT NOT NULL,
-        show_name  TEXT NOT NULL,
-        active_flag TEXT NOT NULL DEFAULT 'Y',
-        UNIQUE(year, show_code, show_name)
-    )""")
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS work_codes (
-        work_code_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        code         TEXT UNIQUE NOT NULL,
-        description  TEXT NOT NULL,
-        active_flag  TEXT NOT NULL DEFAULT 'Y'
-    )""")
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS show_work_codes (
-        show_id      INTEGER NOT NULL,
-        work_code_id INTEGER NOT NULL,
-        PRIMARY KEY (show_id, work_code_id),
-        FOREIGN KEY(show_id)      REFERENCES shows(show_id),
-        FOREIGN KEY(work_code_id) REFERENCES work_codes(work_code_id)
-    )""")
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS timesheet_entries (
-        entry_id     INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id      INTEGER NOT NULL,
-        show_id      INTEGER,
-        work_code_id INTEGER NOT NULL,
-        work_date    TEXT NOT NULL,
-        hours        REAL NOT NULL,
-        comments     TEXT,
-        created_at   TEXT NOT NULL,
-        updated_at   TEXT NOT NULL,
-        FOREIGN KEY(user_id)      REFERENCES users(user_id),
-        FOREIGN KEY(show_id)      REFERENCES shows(show_id),
-        FOREIGN KEY(work_code_id) REFERENCES work_codes(work_code_id)
-    )""")
-
-    if not column_exists(conn, "timesheet_entries", "show_id"):
-        cur.execute("ALTER TABLE timesheet_entries ADD COLUMN show_id INTEGER")
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS notifications (
-        notification_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id         INTEGER,
-        message         TEXT NOT NULL,
-        notification_type TEXT NOT NULL DEFAULT 'warning',
-        is_read         TEXT NOT NULL DEFAULT 'N',
-        created_at      TEXT NOT NULL,
-        FOREIGN KEY(user_id) REFERENCES users(user_id)
-    )""")
-
-    # Default admin — change password after first login
-    if not cur.execute("SELECT 1 FROM users WHERE email = ?", ("admin@zydesoft.com",)).fetchone():
+    if DATABASE_URL:
         cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id       SERIAL PRIMARY KEY,
+            name          TEXT NOT NULL,
+            email         TEXT UNIQUE NOT NULL,
+            password      TEXT,
+            role          TEXT NOT NULL CHECK(role IN ('admin', 'user')),
+            auth_provider TEXT NOT NULL DEFAULT 'local'
+        )""")
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS shows (
+            show_id     SERIAL PRIMARY KEY,
+            year        TEXT NOT NULL,
+            show_code   TEXT NOT NULL,
+            show_name   TEXT NOT NULL,
+            active_flag TEXT NOT NULL DEFAULT 'Y',
+            UNIQUE(year, show_code, show_name)
+        )""")
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS work_codes (
+            work_code_id SERIAL PRIMARY KEY,
+            code         TEXT UNIQUE NOT NULL,
+            description  TEXT NOT NULL,
+            active_flag  TEXT NOT NULL DEFAULT 'Y'
+        )""")
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS show_work_codes (
+            show_id      INTEGER NOT NULL REFERENCES shows(show_id),
+            work_code_id INTEGER NOT NULL REFERENCES work_codes(work_code_id),
+            PRIMARY KEY (show_id, work_code_id)
+        )""")
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS timesheet_entries (
+            entry_id     SERIAL PRIMARY KEY,
+            user_id      INTEGER NOT NULL REFERENCES users(user_id),
+            show_id      INTEGER REFERENCES shows(show_id),
+            work_code_id INTEGER NOT NULL REFERENCES work_codes(work_code_id),
+            work_date    TEXT NOT NULL,
+            hours        REAL NOT NULL,
+            comments     TEXT,
+            created_at   TEXT NOT NULL,
+            updated_at   TEXT NOT NULL
+        )""")
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS notifications (
+            notification_id   SERIAL PRIMARY KEY,
+            user_id           INTEGER REFERENCES users(user_id),
+            message           TEXT NOT NULL,
+            notification_type TEXT NOT NULL DEFAULT 'warning',
+            is_read           TEXT NOT NULL DEFAULT 'N',
+            created_at        TEXT NOT NULL
+        )""")
+
+    else:
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL, email TEXT UNIQUE NOT NULL,
+            password TEXT, role TEXT NOT NULL CHECK(role IN ('admin', 'user')),
+            auth_provider TEXT NOT NULL DEFAULT 'local'
+        )""")
+        if not column_exists(conn, "users", "auth_provider"):
+            cur.execute("ALTER TABLE users ADD COLUMN auth_provider TEXT NOT NULL DEFAULT 'local'")
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS shows (
+            show_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            year TEXT NOT NULL, show_code TEXT NOT NULL, show_name TEXT NOT NULL,
+            active_flag TEXT NOT NULL DEFAULT 'Y', UNIQUE(year, show_code, show_name)
+        )""")
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS work_codes (
+            work_code_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT UNIQUE NOT NULL, description TEXT NOT NULL,
+            active_flag TEXT NOT NULL DEFAULT 'Y'
+        )""")
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS show_work_codes (
+            show_id INTEGER NOT NULL, work_code_id INTEGER NOT NULL,
+            PRIMARY KEY (show_id, work_code_id),
+            FOREIGN KEY(show_id) REFERENCES shows(show_id),
+            FOREIGN KEY(work_code_id) REFERENCES work_codes(work_code_id)
+        )""")
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS timesheet_entries (
+            entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL, show_id INTEGER, work_code_id INTEGER NOT NULL,
+            work_date TEXT NOT NULL, hours REAL NOT NULL, comments TEXT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(user_id),
+            FOREIGN KEY(show_id) REFERENCES shows(show_id),
+            FOREIGN KEY(work_code_id) REFERENCES work_codes(work_code_id)
+        )""")
+        if not column_exists(conn, "timesheet_entries", "show_id"):
+            cur.execute("ALTER TABLE timesheet_entries ADD COLUMN show_id INTEGER")
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS notifications (
+            notification_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER, message TEXT NOT NULL,
+            notification_type TEXT NOT NULL DEFAULT 'warning',
+            is_read TEXT NOT NULL DEFAULT 'N', created_at TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(user_id)
+        )""")
+
+    # Seed admin user
+    p = get_placeholder()
+    cur.execute(f"SELECT 1 FROM users WHERE email = {p}", ("admin@zydesoft.com",))
+    if not cur.fetchone():
+        cur.execute(f"""
             INSERT INTO users (name, email, password, role, auth_provider)
-            VALUES (?, ?, ?, ?, ?)
+            VALUES ({p},{p},{p},{p},{p})
         """, ("Admin", "admin@zydesoft.com", generate_password_hash("changeme123"), "admin", "local"))
 
     # Seed work codes
     for code in APP_WORK_CODES:
-        cur.execute("""
-            INSERT OR IGNORE INTO work_codes (code, description, active_flag)
-            VALUES (?, ?, 'Y')
-        """, (code, code))
+        if DATABASE_URL:
+            cur.execute("""
+                INSERT INTO work_codes (code, description, active_flag)
+                VALUES (%s,%s,'Y') ON CONFLICT (code) DO NOTHING
+            """, (code, code))
+        else:
+            cur.execute("INSERT OR IGNORE INTO work_codes (code, description, active_flag) VALUES (?,?,'Y')", (code, code))
 
     conn.commit()
+    if DATABASE_URL:
+        cur.close()
     conn.close()
 
-    # Pull show list from Google Sheet (if service account available)
-    # Falls back gracefully if not configured yet
     if SHEETS_SYNC_ENABLED:
         print("[App] Syncing shows from Google Sheet...")
         added, err = sync_shows(DB_NAME)
@@ -170,33 +229,35 @@ def init_db():
         else:
             print(f"[App] Show sync done — {added} new show(s) added")
     else:
-        # Seed special shows so the app is usable without sheets
         _seed_special_shows()
 
 
 def _seed_special_shows():
-    """Seed Vacation/Holiday/Other when sheets sync is not available."""
     special = [
         ("GENERAL", "VACATION", "Vacation"),
         ("GENERAL", "HOLIDAY",  "Holiday"),
         ("GENERAL", "OTHER",    "Other"),
     ]
     conn = get_db()
-    cur  = conn.cursor()
     for year, show_code, show_name in special:
-        cur.execute("""
-            INSERT OR IGNORE INTO shows (year, show_code, show_name, active_flag)
-            VALUES (?, ?, ?, 'Y')
-        """, (year, show_code, show_name))
-    # Link to all work codes
-    show_rows = cur.execute("SELECT show_id FROM shows").fetchall()
-    work_rows = cur.execute("SELECT work_code_id FROM work_codes").fetchall()
+        try:
+            db_execute(conn, """
+                INSERT INTO shows (year, show_code, show_name, active_flag)
+                VALUES (?,?,?,'Y')
+            """ + (" ON CONFLICT (year,show_code,show_name) DO NOTHING" if DATABASE_URL else ""),
+            (year, show_code, show_name))
+        except Exception:
+            pass
+
+    show_rows = db_execute(conn, "SELECT show_id FROM shows").fetchall()
+    work_rows = db_execute(conn, "SELECT work_code_id FROM work_codes").fetchall()
     for show in show_rows:
         for work in work_rows:
-            cur.execute("""
-                INSERT OR IGNORE INTO show_work_codes (show_id, work_code_id)
-                VALUES (?, ?)
-            """, (show["show_id"], work["work_code_id"]))
+            try:
+                db_execute(conn, "INSERT INTO show_work_codes (show_id, work_code_id) VALUES (?,?)",
+                           (show["show_id"], work["work_code_id"]))
+            except Exception:
+                pass
     conn.commit()
     conn.close()
 
@@ -247,9 +308,9 @@ def week_bounds(selected_week=None):
 def create_notification(user_id, message, notification_type="warning"):
     conn = get_db()
     now  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    conn.execute("""
+    db_execute(conn, """
         INSERT INTO notifications (user_id, message, notification_type, is_read, created_at)
-        VALUES (?, ?, ?, 'N', ?)
+        VALUES (?,?,?,'N',?)
     """, (user_id, message, notification_type, now))
     conn.commit()
     conn.close()
@@ -257,18 +318,18 @@ def create_notification(user_id, message, notification_type="warning"):
 
 def validate_day(user_id, work_date):
     conn  = get_db()
-    total = conn.execute("""
+    total = db_execute(conn, """
         SELECT COALESCE(SUM(hours), 0) AS total_hours
         FROM timesheet_entries WHERE user_id = ? AND work_date = ?
     """, (user_id, work_date)).fetchone()["total_hours"]
 
-    missing_notes = conn.execute("""
+    missing_notes = db_execute(conn, """
         SELECT COUNT(*) AS cnt FROM timesheet_entries
         WHERE user_id = ? AND work_date = ?
           AND (comments IS NULL OR TRIM(comments) = '')
     """, (user_id, work_date)).fetchone()["cnt"]
 
-    user = conn.execute("SELECT name FROM users WHERE user_id = ?", (user_id,)).fetchone()
+    user = db_execute(conn, "SELECT name FROM users WHERE user_id = ?", (user_id,)).fetchone()
     conn.close()
     name = user["name"] if user else "User"
 
@@ -282,24 +343,28 @@ def validate_day(user_id, work_date):
 
 def get_show_work_codes(conn, show_id=None):
     if show_id:
-        return conn.execute("""
+        return db_execute(conn, """
             SELECT w.* FROM work_codes w
             JOIN show_work_codes swc ON w.work_code_id = swc.work_code_id
             WHERE swc.show_id = ? AND w.active_flag = 'Y'
             ORDER BY w.code
         """, (show_id,)).fetchall()
-    return conn.execute(
+    return db_execute(conn,
         "SELECT * FROM work_codes WHERE active_flag = 'Y' ORDER BY code"
     ).fetchall()
 
 
 def do_sheets_sync(user_id):
-    """Sync user to Google Sheet if enabled. Silently skips if not."""
     if not SHEETS_SYNC_ENABLED:
         return
     ok, err = sync_user_to_sheet(user_id)
     if not ok:
-        flash(f"Entry saved locally but Google Sheets sync failed: {err}", "warning")
+        flash(f"Entry saved but Google Sheets sync failed: {err}", "warning")
+
+
+def generate_password(length=10):
+    alphabet = string.ascii_letters + string.digits
+    return ''.join(secrets.choice(alphabet) for _ in range(length))
 
 
 # ── Routes: Auth ──────────────────────────────────────────────────────────────
@@ -308,13 +373,14 @@ def do_sheets_sync(user_id):
 def home():
     return redirect(url_for("dashboard") if "user_id" in session else url_for("login"))
 
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
         email    = request.form["email"].strip().lower()
         password = request.form["password"]
         conn     = get_db()
-        user     = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+        user     = db_execute(conn, "SELECT * FROM users WHERE email = ?", (email,)).fetchone()
         conn.close()
 
         if user and user["password"] and check_password_hash(user["password"], password):
@@ -324,43 +390,7 @@ def login():
             return redirect(url_for("dashboard"))
 
         flash("Invalid email or password.", "error")
-
     return render_template("login.html")
-
-
-@app.route("/login/google")
-def google_login():
-    if not AUTHLIB_AVAILABLE:
-        flash("Google login package not installed.", "error")
-        return redirect(url_for("login"))
-    return google.authorize_redirect(url_for("google_callback", _external=True))
-
-
-@app.route("/auth/google/callback")
-def google_callback():
-    token     = google.authorize_access_token()
-    user_info = token.get("userinfo") or google.get(
-        "https://openidconnect.googleapis.com/v1/userinfo"
-    ).json()
-
-    email = user_info["email"].lower()
-    name  = user_info.get("name", email)
-
-    conn = get_db()
-    user = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-    if not user:
-        conn.execute("""
-            INSERT INTO users (name, email, password, role, auth_provider)
-            VALUES (?, ?, NULL, 'user', 'google')
-        """, (name, email))
-        conn.commit()
-        user = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-    conn.close()
-
-    session["user_id"] = user["user_id"]
-    session["name"]    = user["name"]
-    session["role"]    = user["role"]
-    return redirect(url_for("dashboard"))
 
 
 @app.route("/logout")
@@ -380,18 +410,20 @@ def dashboard():
     current_friday = current_monday + timedelta(days=4)
     business_days  = [current_monday + timedelta(days=i) for i in range(5)]
 
+    admin_missing_month = []
+
     if session["role"] == "admin":
-        total_hours = conn.execute(
+        total_hours = db_execute(conn,
             "SELECT COALESCE(SUM(hours), 0) AS total FROM timesheet_entries"
         ).fetchone()["total"]
 
-        users = conn.execute("""
-            SELECT user_id, name, email FROM users WHERE role = 'user' ORDER BY name
-        """).fetchall()
+        users = db_execute(conn,
+            "SELECT user_id, name, email FROM users WHERE role = 'user' ORDER BY name"
+        ).fetchall()
 
         admin_missing_users = []
         for u in users:
-            rows = conn.execute("""
+            rows = db_execute(conn, """
                 SELECT work_date, COALESCE(SUM(hours), 0) AS total_hours
                 FROM timesheet_entries
                 WHERE user_id = ? AND work_date BETWEEN ? AND ?
@@ -401,15 +433,11 @@ def dashboard():
             totals       = {r["work_date"]: r["total_hours"] for r in rows}
             week_entered = 0
             days         = []
-
             for d in business_days:
                 entered = totals.get(d.isoformat(), 0)
-                missing = max(8 - entered, 0)
                 week_entered += entered
-                days.append({
-                    "date": d.isoformat(), "day_name": d.strftime("%A"),
-                    "entered": entered, "missing": missing
-                })
+                days.append({"date": d.isoformat(), "day_name": d.strftime("%A"),
+                             "entered": entered, "missing": max(8 - entered, 0)})
 
             total_missing = max(40 - week_entered, 0)
             if total_missing > 0:
@@ -418,66 +446,57 @@ def dashboard():
                     "entered": week_entered, "missing": total_missing, "days": days
                 })
 
-         # Missing this month — users with < (working_days_so_far * 8) hrs
-        today_date     = date.today()
-        month_start    = today_date.replace(day=1)
-        # Working days from month start to today
+        # Missing this month
+        month_start = today.replace(day=1)
         month_working_days = []
         d = month_start
-        while d <= today_date:
+        while d <= today:
             if d.weekday() < 5:
                 month_working_days.append(d)
             d += timedelta(days=1)
         month_required_hrs = len(month_working_days) * 8
 
-        admin_missing_month = []
         for u in users:
-            rows = conn.execute("""
+            row = db_execute(conn, """
                 SELECT COALESCE(SUM(hours), 0) AS total_hours
                 FROM timesheet_entries
                 WHERE user_id = ? AND work_date BETWEEN ? AND ?
-            """, (u["user_id"], month_start.isoformat(), today_date.isoformat())).fetchone()
-            logged = rows["total_hours"]
+            """, (u["user_id"], month_start.isoformat(), today.isoformat())).fetchone()
+            logged = row["total_hours"]
             if logged < month_required_hrs:
                 admin_missing_month.append({
-                    "user_id": u["user_id"],
-                    "name":    u["name"],
-                    "logged":  logged,
-                    "missing": round(month_required_hrs - logged, 1)
+                    "user_id": u["user_id"], "name": u["name"],
+                    "logged":  logged, "missing": round(month_required_hrs - logged, 1)
                 })
 
         pending_summary = None
 
     else:
-        total_hours = conn.execute(
+        total_hours = db_execute(conn,
             "SELECT COALESCE(SUM(hours), 0) AS total FROM timesheet_entries WHERE user_id = ?",
             (session["user_id"],)
         ).fetchone()["total"]
 
-        week_rows = conn.execute("""
+        week_rows = db_execute(conn, """
             SELECT work_date, COALESCE(SUM(hours), 0) AS total_hours
             FROM timesheet_entries
             WHERE user_id = ? AND work_date BETWEEN ? AND ?
             GROUP BY work_date
         """, (session["user_id"], current_monday.isoformat(), current_friday.isoformat())).fetchall()
 
-        totals        = {r["work_date"]: r["total_hours"] for r in week_rows}
-        week_entered  = 0
-        pending_days  = []
-
+        totals       = {r["work_date"]: r["total_hours"] for r in week_rows}
+        week_entered = 0
+        pending_days = []
         for d in business_days:
             entered = totals.get(d.isoformat(), 0)
-            missing = max(8 - entered, 0)
             week_entered += entered
-            pending_days.append({
-                "date": d.isoformat(), "day_name": d.strftime("%A"),
-                "entered": entered, "missing": missing
-            })
+            pending_days.append({"date": d.isoformat(), "day_name": d.strftime("%A"),
+                                 "entered": entered, "missing": max(8 - entered, 0)})
 
         pending_summary     = {"entered": week_entered, "missing": max(40 - week_entered, 0), "days": pending_days}
         admin_missing_users = []
 
-    recent_entries = conn.execute("""
+    recent_entries = db_execute(conn, """
         SELECT t.entry_id, t.work_date, t.hours, t.comments,
                w.code, w.description, s.show_code, s.show_name, u.name
         FROM timesheet_entries t
@@ -497,20 +516,20 @@ def dashboard():
         current_group["entries"].append(entry)
 
     if session["role"] == "admin":
-        notifications = conn.execute("""
+        notifications = db_execute(conn, """
             SELECT n.*, u.name FROM notifications n
             LEFT JOIN users u ON n.user_id = u.user_id
             ORDER BY n.created_at DESC LIMIT 10
         """).fetchall()
-        notification_count = conn.execute(
+        notification_count = db_execute(conn,
             "SELECT COUNT(*) AS cnt FROM notifications WHERE is_read = 'N'"
         ).fetchone()["cnt"]
     else:
-        notifications = conn.execute("""
+        notifications = db_execute(conn, """
             SELECT * FROM notifications WHERE user_id = ?
             ORDER BY created_at DESC LIMIT 10
         """, (session["user_id"],)).fetchall()
-        notification_count = conn.execute(
+        notification_count = db_execute(conn,
             "SELECT COUNT(*) AS cnt FROM notifications WHERE user_id = ? AND is_read = 'N'",
             (session["user_id"],)
         ).fetchone()["cnt"]
@@ -521,7 +540,7 @@ def dashboard():
         total_hours=total_hours,
         pending_summary=pending_summary,
         admin_missing_users=admin_missing_users,
-        admin_missing_month=admin_missing_month if session["role"] == "admin" else [],
+        admin_missing_month=admin_missing_month,
         grouped_recent_entries=grouped,
         notifications=notifications,
         notification_count=notification_count,
@@ -551,7 +570,7 @@ def timesheet():
         comments     = request.form.get("comments", "").strip()
         now          = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        allowed = conn.execute("""
+        allowed = db_execute(conn, """
             SELECT 1 FROM show_work_codes WHERE show_id = ? AND work_code_id = ?
         """, (show_id, work_code_id)).fetchone()
 
@@ -561,11 +580,13 @@ def timesheet():
             flash("Work code not assigned to selected show.", "error")
         elif hours <= 0 or hours > 24:
             flash("Hours must be between 0 and 24.", "error")
+        elif not comments:
+            flash("Notes are required.", "error")
         else:
-            conn.execute("""
+            db_execute(conn, """
                 INSERT INTO timesheet_entries
                 (user_id, show_id, work_code_id, work_date, hours, comments, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?,?,?,?,?,?,?,?)
             """, (session["user_id"], show_id, work_code_id, work_date, hours, comments, now, now))
             conn.commit()
             conn.close()
@@ -574,12 +595,9 @@ def timesheet():
             flash("Entry saved.", "success")
             return redirect(url_for("timesheet"))
 
-    shows      = conn.execute("""
-        SELECT * FROM shows WHERE active_flag = 'Y'
-        ORDER BY year, show_code, show_name
-    """).fetchall()
+    shows      = db_execute(conn, "SELECT * FROM shows WHERE active_flag = 'Y' ORDER BY year, show_code, show_name").fetchall()
     work_codes = get_show_work_codes(conn)
-    entries    = conn.execute("""
+    entries    = db_execute(conn, """
         SELECT t.entry_id, t.work_date, t.hours, t.comments,
                w.code, w.description, s.show_code, s.show_name, s.year
         FROM timesheet_entries t
@@ -590,7 +608,6 @@ def timesheet():
     """, (session["user_id"],)).fetchall()
 
     conn.close()
-    # Allow dashboard day cards to pre-fill the date field
     prefill_date = request.args.get("prefill_date", datetime.now().strftime("%Y-%m-%d"))
     return render_template("timesheet.html",
         shows=shows, work_codes=work_codes, entries=entries,
@@ -603,14 +620,15 @@ def api_work_codes(show_id):
     conn  = get_db()
     rows  = get_show_work_codes(conn, show_id)
     conn.close()
-    return {"work_codes": [{"work_code_id": r["work_code_id"], "code": r["code"], "description": r["description"]} for r in rows]}
+    return {"work_codes": [{"work_code_id": r["work_code_id"], "code": r["code"],
+                            "description": r["description"]} for r in rows]}
 
 
 @app.route("/edit-entry/<int:entry_id>", methods=["GET", "POST"])
 @login_required
 def edit_entry(entry_id):
     conn  = get_db()
-    entry = conn.execute("""
+    entry = db_execute(conn, """
         SELECT * FROM timesheet_entries
         WHERE entry_id = ? AND (? = 'admin' OR user_id = ?)
     """, (entry_id, session["role"], session["user_id"])).fetchone()
@@ -633,7 +651,7 @@ def edit_entry(entry_id):
         comments     = request.form.get("comments", "").strip()
         now          = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        allowed = conn.execute("""
+        allowed = db_execute(conn, """
             SELECT 1 FROM show_work_codes WHERE show_id = ? AND work_code_id = ?
         """, (show_id, work_code_id)).fetchone()
 
@@ -643,8 +661,10 @@ def edit_entry(entry_id):
             flash("Work code not assigned to selected show.", "error")
         elif hours <= 0 or hours > 24:
             flash("Hours must be between 0 and 24.", "error")
+        elif not comments:
+            flash("Notes are required.", "error")
         else:
-            conn.execute("""
+            db_execute(conn, """
                 UPDATE timesheet_entries
                 SET show_id = ?, work_date = ?, work_code_id = ?, hours = ?, comments = ?, updated_at = ?
                 WHERE entry_id = ?
@@ -656,7 +676,7 @@ def edit_entry(entry_id):
             flash("Entry updated.", "success")
             return redirect(url_for("timesheet"))
 
-    shows      = conn.execute("SELECT * FROM shows WHERE active_flag = 'Y' ORDER BY year, show_code, show_name").fetchall()
+    shows      = db_execute(conn, "SELECT * FROM shows WHERE active_flag = 'Y' ORDER BY year, show_code, show_name").fetchall()
     work_codes = get_show_work_codes(conn, entry["show_id"])
     conn.close()
     return render_template("edit_entry.html", entry=entry, shows=shows, work_codes=work_codes)
@@ -666,7 +686,7 @@ def edit_entry(entry_id):
 @login_required
 def delete_entry(entry_id):
     conn  = get_db()
-    entry = conn.execute("SELECT * FROM timesheet_entries WHERE entry_id = ?", (entry_id,)).fetchone()
+    entry = db_execute(conn, "SELECT * FROM timesheet_entries WHERE entry_id = ?", (entry_id,)).fetchone()
 
     if not entry:
         conn.close()
@@ -681,10 +701,10 @@ def delete_entry(entry_id):
     user_id = entry["user_id"]
 
     if session["role"] == "admin":
-        conn.execute("DELETE FROM timesheet_entries WHERE entry_id = ?", (entry_id,))
+        db_execute(conn, "DELETE FROM timesheet_entries WHERE entry_id = ?", (entry_id,))
     else:
-        conn.execute("DELETE FROM timesheet_entries WHERE entry_id = ? AND user_id = ?",
-                     (entry_id, session["user_id"]))
+        db_execute(conn, "DELETE FROM timesheet_entries WHERE entry_id = ? AND user_id = ?",
+                   (entry_id, session["user_id"]))
 
     conn.commit()
     conn.close()
@@ -707,7 +727,7 @@ def weekly():
     friday        = monday + timedelta(days=4)
 
     conn = get_db()
-    rows = conn.execute("""
+    rows = db_execute(conn, """
         SELECT work_date, SUM(hours) AS total_hours
         FROM timesheet_entries
         WHERE user_id = ? AND work_date BETWEEN ? AND ?
@@ -725,13 +745,11 @@ def weekly():
             status, cls = "Partially filled", "partial-time"
         else:
             status, cls = "Complete", "full-time"
-        days.append({
-            "date": d.isoformat(), "day_name": d.strftime("%A"),
-            "total": total, "status": status, "status_class": cls,
-            "locked": is_locked(d.isoformat())
-        })
+        days.append({"date": d.isoformat(), "day_name": d.strftime("%A"),
+                     "total": total, "status": status, "status_class": cls,
+                     "locked": is_locked(d.isoformat())})
 
-    entries = conn.execute("""
+    entries = db_execute(conn, """
         SELECT t.entry_id, t.work_date, t.hours, t.comments,
                w.code, w.description, s.show_code, s.show_name
         FROM timesheet_entries t
@@ -742,12 +760,10 @@ def weekly():
     """, (session["user_id"], monday.isoformat(), friday.isoformat())).fetchall()
 
     conn.close()
-
     return render_template("weekly.html",
         monday=monday, sunday=friday, days=days, entries=entries,
         prev_week=(monday - timedelta(days=7)).isoformat(),
-        next_week=(monday + timedelta(days=7)).isoformat()
-    )
+        next_week=(monday + timedelta(days=7)).isoformat())
 
 
 # ── Routes: Reports (Admin) ───────────────────────────────────────────────────
@@ -791,7 +807,7 @@ def reports():
         params.append(work_code_id)
 
     conn    = get_db()
-    entries = conn.execute(f"""
+    entries = db_execute(conn, f"""
         SELECT t.entry_id, u.name, t.work_date,
                s.year, s.show_code, s.show_name,
                w.code, w.description, t.hours, t.comments
@@ -803,7 +819,7 @@ def reports():
         ORDER BY t.work_date DESC, u.name, s.show_code, w.code
     """, params).fetchall()
 
-    summary = conn.execute(f"""
+    summary = db_execute(conn, f"""
         SELECT u.name, s.show_code, s.show_name, w.code, SUM(t.hours) AS total_hours
         FROM timesheet_entries t
         JOIN users u       ON t.user_id      = u.user_id
@@ -814,10 +830,9 @@ def reports():
         ORDER BY u.name, s.show_code, w.code
     """, params).fetchall()
 
-    # Missing entries panel
     missing_report = []
     if from_date and to_date:
-        all_users = conn.execute(
+        all_users = db_execute(conn,
             "SELECT user_id, name FROM users WHERE role = 'user' ORDER BY name"
         ).fetchall()
         fd = datetime.strptime(from_date, "%Y-%m-%d").date()
@@ -830,7 +845,7 @@ def reports():
             d += timedelta(days=1)
 
         for u in all_users:
-            rows = conn.execute("""
+            rows = db_execute(conn, """
                 SELECT work_date, COALESCE(SUM(hours), 0) AS total_hours
                 FROM timesheet_entries
                 WHERE user_id = ? AND work_date BETWEEN ? AND ?
@@ -841,25 +856,18 @@ def reports():
             for wd in working_days:
                 hrs = totals.get(wd.isoformat(), 0)
                 if hrs < 8:
-                    missing_days.append({
-                        "date":    wd.isoformat(),
-                        "day_name": wd.strftime("%A"),
-                        "entered": hrs,
-                        "missing": round(8 - hrs, 2)
-                    })
+                    missing_days.append({"date": wd.isoformat(), "day_name": wd.strftime("%A"),
+                                         "entered": hrs, "missing": round(8 - hrs, 2)})
             if missing_days:
-                missing_report.append({
-                    "name":          u["name"],
-                    "user_id":       u["user_id"],
-                    "missing_days":  missing_days,
-                    "total_missing": sum(d["missing"] for d in missing_days)
-                })
+                missing_report.append({"name": u["name"], "user_id": u["user_id"],
+                    "missing_days": missing_days,
+                    "total_missing": sum(d["missing"] for d in missing_days)})
 
-    users     = conn.execute("SELECT user_id, name FROM users ORDER BY name").fetchall()
-    show_rows = conn.execute(
+    users     = db_execute(conn, "SELECT user_id, name FROM users ORDER BY name").fetchall()
+    show_rows = db_execute(conn,
         "SELECT show_id, year, show_code, show_name FROM shows ORDER BY year, show_code, show_name"
     ).fetchall()
-    codes = conn.execute("SELECT work_code_id, code FROM work_codes ORDER BY code").fetchall()
+    codes = db_execute(conn, "SELECT work_code_id, code FROM work_codes ORDER BY code").fetchall()
     conn.close()
 
     return render_template("reports.html",
@@ -916,12 +924,12 @@ def export_report():
     query += " ORDER BY t.work_date DESC, u.name, s.show_code, w.code"
 
     conn = get_db()
-    rows = conn.execute(query, params).fetchall()
+    rows = db_execute(conn, query, params).fetchall()
     conn.close()
 
     output = StringIO()
     writer = csv.writer(output)
-    writer.writerow(["User", "Date", "Year", "Show Code", "Show Name", "Work Code", "Description", "Hours", "Comments"])
+    writer.writerow(["User","Date","Year","Show Code","Show Name","Work Code","Description","Hours","Comments"])
     for row in rows:
         writer.writerow([row["name"], row["work_date"], row["year"], row["show_code"],
                          row["show_name"], row["code"], row["description"], row["hours"], row["comments"]])
@@ -931,33 +939,31 @@ def export_report():
                     headers={"Content-Disposition": f"attachment; filename={filename}"})
 
 
-# ── Admin: Sync Shows on Demand ───────────────────────────────────────────────
+# ── Admin: Sync Shows ─────────────────────────────────────────────────────────
 
 @app.route("/admin/sync-shows")
 @login_required
 @admin_required
 def admin_sync_shows():
     if not SHEETS_SYNC_ENABLED:
-        flash("Google Sheets sync is not configured (service_account.json missing).", "error")
+        flash("Google Sheets sync is not configured.", "error")
         return redirect(url_for("dashboard"))
-
     added, err = sync_shows(DB_NAME)
     if err:
         flash(f"Show sync failed: {err}", "error")
     else:
         flash(f"Show list refreshed — {added} new show(s) added.", "success")
-
     return redirect(url_for("dashboard"))
 
 
-# ── Admin: Manage Users ───────────────────────────────────────────────────────
+# ── Admin: Users ──────────────────────────────────────────────────────────────
 
 @app.route("/admin/users")
 @login_required
 @admin_required
 def admin_users():
     conn  = get_db()
-    users = conn.execute("SELECT user_id, name, email, role FROM users ORDER BY name").fetchall()
+    users = db_execute(conn, "SELECT user_id, name, email, role FROM users ORDER BY name").fetchall()
     conn.close()
     return render_template("admin_users.html", users=users)
 
@@ -973,13 +979,14 @@ def admin_add_user():
 
     conn = get_db()
     try:
-        conn.execute("""
+        db_execute(conn, """
             INSERT INTO users (name, email, password, role, auth_provider)
-            VALUES (?, ?, ?, ?, 'local')
+            VALUES (?,?,?,?,'local')
         """, (name, email, generate_password_hash(password), role))
         conn.commit()
-        flash(f"User {name} created.", "success")
-    except sqlite3.IntegrityError:
+        flash(f"User {name} created. Password: {password}", "success")
+    except Exception:
+        conn.rollback()
         flash(f"Email {email} already exists.", "error")
     conn.close()
     return redirect(url_for("admin_users"))
@@ -993,15 +1000,40 @@ def admin_delete_user(user_id):
         flash("Cannot delete your own account.", "error")
         return redirect(url_for("admin_users"))
     conn = get_db()
-    conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+    db_execute(conn, "DELETE FROM users WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
     flash("User deleted.", "success")
     return redirect(url_for("admin_users"))
 
-# ── Vacation Notification ─────────────────────────────────────────────────────
 
-VACATION_NOTIFY_EMAILS = ["kirthika@zydesoft.com", "sivanraj@zydesoft.com"]
+@app.route("/admin/users/reset-password/<int:user_id>", methods=["POST"])
+@login_required
+@admin_required
+def admin_reset_password(user_id):
+    new_password = request.form.get("new_password", "").strip() or generate_password()
+    conn = get_db()
+    user = db_execute(conn, "SELECT name FROM users WHERE user_id = ?", (user_id,)).fetchone()
+    if not user:
+        conn.close()
+        flash("User not found.", "error")
+        return redirect(url_for("admin_users"))
+    db_execute(conn, "UPDATE users SET password = ? WHERE user_id = ?",
+               (generate_password_hash(new_password), user_id))
+    conn.commit()
+    conn.close()
+    flash(f"Password for {user['name']} reset to: {new_password} — share this with them directly.", "success")
+    return redirect(url_for("admin_users"))
+
+
+@app.route("/admin/users/generate-password")
+@login_required
+@admin_required
+def admin_generate_password():
+    return {"password": generate_password()}
+
+
+# ── Vacation Notification ─────────────────────────────────────────────────────
 
 @app.route("/vacation", methods=["GET", "POST"])
 @login_required
@@ -1011,13 +1043,11 @@ def vacation():
         return redirect(url_for("dashboard"))
 
     if request.method == "POST":
-        # Collect rows: each row is date + hours
-        dates = request.form.getlist("vac_date")
-        hours = request.form.getlist("vac_hours")
-        notes = request.form.get("vac_notes", "").strip()
-
-        # Build entries — skip empty rows
+        dates   = request.form.getlist("vac_date")
+        hours   = request.form.getlist("vac_hours")
+        notes   = request.form.get("vac_notes", "").strip()
         entries = []
+
         for d, h in zip(dates, hours):
             d = d.strip()
             h = h.strip()
@@ -1036,7 +1066,6 @@ def vacation():
             flash("Please add at least one vacation date.", "error")
             return redirect(url_for("vacation"))
 
-        # Build and send email
         total_hours = sum(e["hours"] for e in entries)
         name        = session.get("name")
 
@@ -1051,9 +1080,7 @@ def vacation():
             </tr>
         """ for e in entries)
 
-        notes_section = f"""
-            <p style="margin-top:16px;"><strong>Notes:</strong> {notes}</p>
-        """ if notes else ""
+        notes_section = f"<p style='margin-top:16px;'><strong>Notes:</strong> {notes}</p>" if notes else ""
 
         html_body = f"""
         <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
@@ -1081,7 +1108,7 @@ def vacation():
                 </table>
                 {notes_section}
                 <p style="color:#888;font-size:12px;margin-top:20px;">
-                    This is a notification only. The employee will log vacation hours in their timesheet separately.
+                    This is a notification only. Hours should be logged in the timesheet separately.
                 </p>
             </div>
             <p style="color:#aaa;font-size:12px;margin-top:20px;text-align:center;">
@@ -1111,7 +1138,7 @@ def vacation():
                 server.login(smtp_user, smtp_pass)
                 server.sendmail(smtp_user, VACATION_NOTIFY_EMAILS, msg.as_string())
 
-            flash(f"✅ Vacation notification sent to the team for {len(entries)} day(s), {total_hours} total hours.", "success")
+            flash(f"✅ Vacation notification sent for {len(entries)} day(s), {total_hours} total hours.", "success")
             return redirect(url_for("vacation"))
 
         except Exception as e:
@@ -1120,47 +1147,11 @@ def vacation():
 
     return render_template("vacation.html")
 
-import secrets
-import string
 
-def generate_password(length=10):
-    alphabet = string.ascii_letters + string.digits
-    return ''.join(secrets.choice(alphabet) for _ in range(length))
-
-
-@app.route("/admin/users/reset-password/<int:user_id>", methods=["POST"])
-@login_required
-@admin_required
-def admin_reset_password(user_id):
-    new_password = request.form.get("new_password", "").strip()
-    if not new_password:
-        new_password = generate_password()
-
-    conn = get_db()
-    user = conn.execute("SELECT name, email FROM users WHERE user_id = ?", (user_id,)).fetchone()
-    if not user:
-        conn.close()
-        flash("User not found.", "error")
-        return redirect(url_for("admin_users"))
-
-    conn.execute("UPDATE users SET password = ? WHERE user_id = ?",
-                 (generate_password_hash(new_password), user_id))
-    conn.commit()
-    conn.close()
-
-    flash(f"Password for {user['name']} reset to: {new_password} — share this with them directly.", "success")
-    return redirect(url_for("admin_users"))
-
-
-@app.route("/admin/users/generate-password")
-@login_required
-@admin_required
-def admin_generate_password():
-    return {"password": generate_password()}
+# ── Startup ───────────────────────────────────────────────────────────────────
 
 with app.app_context():
     init_db()
-    
+
 if __name__ == "__main__":
-    init_db()
     app.run(debug=True, host="0.0.0.0", port=5000)
