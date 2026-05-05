@@ -166,15 +166,14 @@
 
 .show-picker-dropdown {
     display: none;
-    position: absolute;
-    top: 100%;
-    left: 0; right: 0;
-    z-index: 300;
+    position: fixed;
+    z-index: 9999;
     background: #fff;
     border: 1px solid #4a86e8;
-    border-top: none;
-    border-radius: 0 0 8px 8px;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+    width: 600px;
+    max-width: 90vw;
 }
 .show-picker.open .show-picker-dropdown { display: block; }
 
@@ -262,10 +261,21 @@ const allOpts     = Array.from(document.querySelectorAll(".show-opt"));
 
 // Toggle open/close
 trigger.addEventListener("click", () => {
-    pickerWrap.classList.toggle("open");
-    if (pickerWrap.classList.contains("open")) {
-        setTimeout(() => showFilter.focus(), 30);
+    const isOpen = pickerWrap.classList.contains("open");
+    if (isOpen) {
+        pickerWrap.classList.remove("open");
+        return;
     }
+
+    // Position dropdown below the trigger
+    const rect     = trigger.getBoundingClientRect();
+    const dropdown = document.getElementById("showDropdown");
+    dropdown.style.top  = (rect.bottom + window.scrollY + 4) + "px";
+    dropdown.style.left = rect.left + "px";
+    dropdown.style.width = Math.max(rect.width, 500) + "px";
+
+    pickerWrap.classList.add("open");
+    setTimeout(() => showFilter.focus(), 30);
 });
 
 // Filter as user types
