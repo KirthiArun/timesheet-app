@@ -17,6 +17,11 @@ from datetime import datetime
 import os, base64, json
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
+from dotenv import load_dotenv
+load_dotenv()
+
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+print(f"[SheetsSync] DATABASE_URL set: {bool(DATABASE_URL)}")
 
 SERVICE_ACCOUNT_FILE = "service_account.json"
 MASTER_SHEET_ID      = "1ENTP8XLLoFISNwLvF5Z7mM6X-ycYcOAERvcyoQ-dqhk"

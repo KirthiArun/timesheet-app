@@ -18,7 +18,11 @@ import os, base64, json
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
+# REPLACE WITH
 import sqlite3, os
+from dotenv import load_dotenv
+load_dotenv()
+
 try:
     import psycopg
 except ImportError:
@@ -26,6 +30,8 @@ except ImportError:
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
+# Debug
+print(f"[SyncShows] DATABASE_URL set: {bool(DATABASE_URL)}")
 
 def get_sync_db(db_name):
     if DATABASE_URL:
