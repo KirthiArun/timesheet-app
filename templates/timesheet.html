@@ -15,17 +15,26 @@
                 <input type="date" name="work_date" id="work_date" value="{{ today }}" required>
             </div>
             <div class="field-show">
-                <label>Show <span class="req">*</span></label>
-                <div class="searchable-select">
-                    <input type="text" id="show_search" placeholder="Type to search shows…" autocomplete="off">
-                    <select name="show_id" id="show_id" required size="1">
-                        <option value="">— Select a show —</option>
+            <label>Show <span class="req">*</span></label>
+            <div class="searchable-select" id="showPickerWrapper">
+                <input type="text" id="show_search" placeholder="Click or type to search shows…"
+                       autocomplete="off" readonly>
+                <input type="hidden" name="show_id" id="show_id">
+                <div class="show-dropdown" id="showDropdown">
+                    <div class="show-dropdown-search">
+                        <input type="text" id="show_filter" placeholder="Type to filter…" autocomplete="off">
+                    </div>
+                    <div class="show-options" id="showOptions">
                         {% for s in shows %}
-                        <option value="{{ s.show_id }}">{{ s.year }} - {{ s.show_code }} - {{ s.show_name }}</option>
+                        <div class="show-option" data-value="{{ s.show_id }}"
+                             data-text="{{ s.year }} - {{ s.show_code }} - {{ s.show_name }}">
+                            {{ s.year }} - {{ s.show_code }} - {{ s.show_name }}
+                        </div>
                         {% endfor %}
-                    </select>
+                    </div>
                 </div>
             </div>
+        </div>
             <div class="field-workcode">
                 <label>Work Code <span class="req">*</span></label>
                 <select name="work_code_id" id="work_code_id" required>
@@ -128,67 +137,105 @@
     .form-row-top { grid-template-columns:1fr 1fr; }
     .field-show   { grid-column:1 / -1; }
 }
-.searchable-select { position: relative; display: flex; flex-direction: column; gap: 4px; }
-.searchable-select input {
+..searchable-select { position: relative; }
+
+.searchable-select #show_search {
+    width: 100%;
     padding: 9px 12px;
     border: 1px solid #dde1ea;
     border-radius: 6px;
     font-size: 14px;
     background: #fafbfc;
     color: #333;
+    cursor: pointer;
     transition: border-color 0.15s;
 }
-.searchable-select input:focus {
-    outline: none;
-    border-color: #4a86e8;
-    background: #fff;
-}
-.searchable-select select {
+.searchable-select #show_search:focus { outline: none; border-color: #4a86e8; background: #fff; }
+.searchable-select.open #show_search { border-color: #4a86e8; border-radius: 6px 6px 0 0; }
+
+.show-dropdown {
     display: none;
     position: absolute;
-    top: 42px;
+    top: 100%;
     left: 0; right: 0;
-    z-index: 100;
-    max-height: 220px;
-    overflow-y: auto;
-    border: 1px solid #4a86e8;
-    border-radius: 6px;
+    z-index: 200;
     background: #fff;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
-    font-size: 14px;
+    border: 1px solid #4a86e8;
+    border-top: none;
+    border-radius: 0 0 6px 6px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.12);
 }
-.searchable-select select.open { display: block; }
-.searchable-select select option { padding: 8px 12px; }
+.searchable-select.open .show-dropdown { display: block; }
+
+.show-dropdown-search {
+    padding: 8px;
+    border-bottom: 1px solid #eee;
+}
+.show-dropdown-search input {
+    width: 100%;
+    padding: 7px 10px;
+    border: 1px solid #dde1ea;
+    border-radius: 4px;
+    font-size: 13px;
+}
+.show-dropdown-search input:focus { outline: none; border-color: #4a86e8; }
+
+.show-options {
+    max-height: 240px;
+    overflow-y: auto;
+}
+.show-option {
+    padding: 9px 12px;
+    font-size: 13px;
+    color: #333;
+    cursor: pointer;
+    border-bottom: 1px solid #f5f5f5;
+}
+.show-option:hover { background: #f0f4ff; color: #4a86e8; }
+.show-option.hidden { display: none; }
+.show-option.selected { background: #e8f0fe; font-weight: 600; }
 </style>
 
 <script>
-    // Searchable show dropdown
-const showSearch  = document.getElementById("show_search");
-const showSelect  = document.getElementById("show_id");
-const allOptions  = Array.from(showSelect.options);
+// ── Show picker ───────────────────────────────────────────
+const showSearch   = document.getElementById("show_search");
+const showIdInput  = document.getElementById("show_id");
+const showDropdown = document.getElementById("showDropdown");
+const showFilter   = document.getElementById("show_filter");
+const showOptions  = document.getElementById("showOptions");
+const wrapper      = document.getElementById("showPickerWrapper");
+const options      = Array.from(document.querySelectorAll(".show-option"));
 
-showSearch.addEventListener("focus", () => {
-    showSelect.classList.add("open");
-    filterShows(showSearch.value);
+// Open on click
+showSearch.addEventListener("click", () => {
+    wrapper.classList.toggle("open");
+    if (wrapper.classList.contains("open")) {
+        setTimeout(() => showFilter.focus(), 50);
+    }
 });
 
-showSearch.addEventListener("input", () => {
-    showSelect.classList.add("open");
-    filterShows(showSearch.value);
+// Filter as user types in the search box inside dropdown
+showFilter.addEventListener("input", function () {
+    const q = this.value.toLowerCase();
+    options.forEach(opt => {
+        opt.classList.toggle("hidden", !opt.dataset.text.toLowerCase().includes(q));
+    });
 });
 
-showSearch.addEventListener("blur", () => {
-    // Delay so click on option registers first
-    setTimeout(() => showSelect.classList.remove("open"), 200);
-});
+// Select an option
+options.forEach(opt => {
+    opt.addEventListener("mousedown", function (e) {
+        e.preventDefault();
+        showSearch.value  = this.dataset.text;
+        showIdInput.value = this.dataset.value;
+        options.forEach(o => o.classList.remove("selected"));
+        this.classList.add("selected");
+        wrapper.classList.remove("open");
+        showFilter.value = "";
+        options.forEach(o => o.classList.remove("hidden"));
 
-showSelect.addEventListener("change", function () {
-    const selected = allOptions.find(o => o.value === this.value);
-    if (selected) showSearch.value = selected.text;
-    showSelect.classList.remove("open");
-    // Trigger work code refresh
-    if (this.value) {
-        fetch(`/api/work-codes/${this.value}`)
+        // Load work codes for selected show
+        fetch(`/api/work-codes/${this.dataset.value}`)
             .then(r => r.json())
             .then(data => {
                 const sel = document.getElementById("work_code_id");
@@ -200,17 +247,19 @@ showSelect.addEventListener("change", function () {
                     sel.appendChild(opt);
                 });
             });
+    });
+});
+
+// Close on outside click
+document.addEventListener("click", function (e) {
+    if (!wrapper.contains(e.target)) {
+        wrapper.classList.remove("open");
+        showFilter.value = "";
+        options.forEach(o => o.classList.remove("hidden"));
     }
 });
 
-function filterShows(query) {
-    const q = query.toLowerCase();
-    Array.from(showSelect.options).forEach(opt => {
-        opt.style.display = (!opt.value || opt.text.toLowerCase().includes(q)) ? "" : "none";
-    });
-}
-
-
+// ── Form submit validation ────────────────────────────────
 document.getElementById("timesheetForm").addEventListener("submit", async function (e) {
     e.preventDefault();
     const errEl = document.getElementById("formError");
@@ -235,7 +284,7 @@ document.getElementById("timesheetForm").addEventListener("submit", async functi
     indicator.style.display = "flex";
 
     try {
-        const res = await fetch("/timesheet", { method:"POST", body:new FormData(this) });
+        const res = await fetch("/timesheet", { method: "POST", body: new FormData(this) });
         if (res.redirected) { window.location.href = res.url; }
         else { window.location.reload(); }
     } catch {
