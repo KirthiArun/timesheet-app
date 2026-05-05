@@ -9,8 +9,7 @@ from email.mime.text import MIMEText
 from dotenv import load_dotenv
 load_dotenv()
 
-import psycopg2
-import psycopg2.extras
+import psycopg
 import sqlite3
 
 # ── App + DB config ───────────────────────────────────────────────────────────
@@ -49,18 +48,15 @@ else:
 
 
 # ── DB Helpers ────────────────────────────────────────────────────────────────
-
 def get_db():
     if DATABASE_URL:
-        conn = psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+        conn = psycopg.connect(DATABASE_URL, row_factory=psycopg.rows.dict_row)
         return conn
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
     return conn
 
-
 def db_execute(conn, sql, params=()):
-    """Unified execute — swaps ? for %s on PostgreSQL."""
     if DATABASE_URL:
         sql = sql.replace("?", "%s")
         cur = conn.cursor()
@@ -68,17 +64,15 @@ def db_execute(conn, sql, params=()):
         return cur
     return conn.execute(sql, params)
 
-
 def column_exists(conn, table_name, column_name):
     if DATABASE_URL:
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT column_name FROM information_schema.columns
-            WHERE table_name = %s AND column_name = %s
-        """, (table_name, column_name))
-        return cur.fetchone() is not None
-    rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
-    return any(row["name"] == column_name for row in rows)
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = %s AND column_name = %s
+            """, (table_name, column_name))
+            return cur.fetchone() is not None
+
 
 
 def get_placeholder():
