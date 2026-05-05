@@ -14,11 +14,27 @@
 
 from googleapiclient.discovery import build
 from google.oauth2.service_account import Credentials
-import sqlite3
-
 import os, base64, json
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
+
+import sqlite3, os
+try:
+    import psycopg
+except ImportError:
+    psycopg = None
+
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+
+
+def get_sync_db(db_name):
+    if DATABASE_URL:
+        conn = psycopg.connect(DATABASE_URL, row_factory=psycopg.rows.dict_row)
+        return conn
+    conn = sqlite3.connect(db_name)
+    conn.row_factory = sqlite3.Row
+    return conn
+
 
 SERVICE_ACCOUNT_FILE = "service_account.json"
 MASTER_SHEET_ID      = "1ENTP8XLLoFISNwLvF5Z7mM6X-ycYcOAERvcyoQ-dqhk"
@@ -91,41 +107,58 @@ def fetch_shows_from_showlist():
 
 
 def upsert_shows_to_db(shows, db_name=DB_NAME):
-    """
-    Inserts new shows. Skips exact duplicates (year+show_code+show_name).
-    Links all work codes to any newly inserted show.
-    Returns count of new shows added.
-    """
-    conn  = sqlite3.connect(db_name)
-    conn.row_factory = sqlite3.Row
+    conn  = get_sync_db(db_name)
     cur   = conn.cursor()
     added = 0
 
     for year, show_code, show_name in shows:
-        existing = cur.execute("""
-            SELECT show_id FROM shows
-            WHERE year = ? AND show_code = ? AND show_name = ?
-        """, (year, show_code, show_name)).fetchone()
+        if DATABASE_URL:
+            cur.execute("""
+                SELECT show_id FROM shows
+                WHERE year = %s AND show_code = %s AND show_name = %s
+            """, (year, show_code, show_name))
+        else:
+            cur.execute("""
+                SELECT show_id FROM shows
+                WHERE year = ? AND show_code = ? AND show_name = ?
+            """, (year, show_code, show_name))
 
-        if existing:
+        if cur.fetchone():
             continue
 
-        cur.execute("""
-            INSERT INTO shows (year, show_code, show_name, active_flag)
-            VALUES (?, ?, ?, 'Y')
-        """, (year, show_code, show_name))
-        show_id = cur.lastrowid
-
-        # Link all existing work codes to this new show
-        for wc in cur.execute("SELECT work_code_id FROM work_codes").fetchall():
+        if DATABASE_URL:
             cur.execute("""
-                INSERT OR IGNORE INTO show_work_codes (show_id, work_code_id)
-                VALUES (?, ?)
-            """, (show_id, wc["work_code_id"]))
+                INSERT INTO shows (year, show_code, show_name, active_flag)
+                VALUES (%s, %s, %s, 'Y') RETURNING show_id
+            """, (year, show_code, show_name))
+            show_id = cur.fetchone()["show_id"]
+            cur.execute("SELECT work_code_id FROM work_codes")
+            work_codes = cur.fetchall()
+            for wc in work_codes:
+                try:
+                    cur.execute("""
+                        INSERT INTO show_work_codes (show_id, work_code_id)
+                        VALUES (%s, %s) ON CONFLICT DO NOTHING
+                    """, (show_id, wc["work_code_id"]))
+                except Exception:
+                    pass
+        else:
+            cur.execute("""
+                INSERT INTO shows (year, show_code, show_name, active_flag)
+                VALUES (?, ?, ?, 'Y')
+            """, (year, show_code, show_name))
+            show_id = cur.lastrowid
+            cur.execute("SELECT work_code_id FROM work_codes")
+            for wc in cur.fetchall():
+                cur.execute("""
+                    INSERT OR IGNORE INTO show_work_codes (show_id, work_code_id)
+                    VALUES (?, ?)
+                """, (show_id, wc["work_code_id"]))
 
         added += 1
 
     conn.commit()
+    cur.close()
     conn.close()
     print(f"[SyncShows] {added} new show(s) added to DB")
     return added
