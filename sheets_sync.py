@@ -2,39 +2,33 @@
 # sheets_sync.py
 # Writes a developer's timesheet entries to the Internal Master sheet.
 # Called on every save / edit / delete in app.py.
-#
-# Flow:
-#   1. Fetch all entries for user from SQLite
-#   2. Clear their tab in master sheet
-#   3. Write fresh rows in the correct column layout
 # ============================================================
 
-from googleapiclient.discovery import build
-from google.oauth2.service_account import Credentials
-import sqlite3
+import os, base64, json, sqlite3
 from datetime import datetime
-
-import os, base64, json
-from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
 from dotenv import load_dotenv
 load_dotenv()
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
+from googleapiclient.discovery import build
+from google.oauth2.service_account import Credentials
+
+try:
+    import psycopg
+except ImportError:
+    psycopg = None
+
+DATABASE_URL    = os.environ.get("DATABASE_URL", "")
+MASTER_SHEET_ID = "1ENTP8XLLoFISNwLvF5Z7mM6X-ycYcOAERvcyoQ-dqhk"
+DB_NAME         = "timesheet.db"
+
 print(f"[SheetsSync] DATABASE_URL set: {bool(DATABASE_URL)}")
 
-SERVICE_ACCOUNT_FILE = "service_account.json"
-MASTER_SHEET_ID      = "1ENTP8XLLoFISNwLvF5Z7mM6X-ycYcOAERvcyoQ-dqhk"
-DB_NAME              = "timesheet.db"
-
-# Must match col D–S order in the master sheet exactly
 WORK_CODE_COLUMNS = [
     "EAAEP", "EAALU", "EACRO", "EADATST", "EADMT",
     "EAEWS", "OTDEV", "OTMIS", "OTPM",   "OTQA",
     "OTTRAIN", "PRWS", "QATEST", "SHAWS", "Vacation"
 ]
 
-# Exact column headers as required by the master sheet
 HEADER_ROW = [
     "Employee", "Show/Year", "Date",
     "EAAEP Task Hours", "EAALU Task Hours", "EACRO Task Hours",
@@ -48,26 +42,43 @@ HEADER_ROW = [
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 
+# ── DB connection ─────────────────────────────────────────────────────────────
+
+def get_db(db_name=DB_NAME):
+    if DATABASE_URL:
+        conn = psycopg.connect(DATABASE_URL, row_factory=psycopg.rows.dict_row)
+        return conn
+    conn = sqlite3.connect(db_name)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def db_execute(conn, sql, params=()):
+    if DATABASE_URL:
+        sql = sql.replace("?", "%s")
+        cur = conn.cursor()
+        cur.execute(sql, params)
+        return cur
+    return conn.execute(sql, params)
+
+
+# ── Sheets service ────────────────────────────────────────────────────────────
+
 def get_sheets_service():
     b64 = os.environ.get("GOOGLE_CREDENTIALS_B64", "")
     if b64:
         info  = json.loads(base64.b64decode(b64).decode("utf-8"))
         creds = Credentials.from_service_account_info(info, scopes=SCOPES)
     else:
-        # Local fallback — reads from file
         creds = Credentials.from_service_account_file("service_account.json", scopes=SCOPES)
     return build("sheets", "v4", credentials=creds)
 
 
-def get_db(db_name=DB_NAME):
-    conn = sqlite3.connect(db_name)
-    conn.row_factory = sqlite3.Row
-    return conn
-
+# ── Data fetchers ─────────────────────────────────────────────────────────────
 
 def fetch_user(user_id):
     conn = get_db()
-    user = conn.execute(
+    user = db_execute(conn,
         "SELECT user_id, name, email FROM users WHERE user_id = ?", (user_id,)
     ).fetchone()
     conn.close()
@@ -76,7 +87,7 @@ def fetch_user(user_id):
 
 def fetch_all_entries_for_user(user_id):
     conn = get_db()
-    rows = conn.execute("""
+    rows = db_execute(conn, """
         SELECT
             t.work_date,
             s.year,
@@ -95,20 +106,16 @@ def fetch_all_entries_for_user(user_id):
     return rows
 
 
+# ── Row builder ───────────────────────────────────────────────────────────────
+
 def build_sheet_rows(tab_name, db_entries):
-    """
-    Groups entries by (work_date, show_label).
-    Each unique (date, show) = one row in the sheet.
-    Work codes spread across columns D–R.
-    """
     grouped = {}
 
     for e in db_entries:
-        # Build show label matching _ShowList format: YEAR - JobNo - ShowName
         if e["year"] and e["show_code"] and e["show_name"]:
             show_label = f"{e['year']} - {e['show_code']} - {e['show_name']}"
         elif e["show_name"]:
-            show_label = e["show_name"]  # Vacation / Holiday / Other
+            show_label = e["show_name"]
         else:
             show_label = ""
 
@@ -118,9 +125,11 @@ def build_sheet_rows(tab_name, db_entries):
             grouped[key] = {code: 0 for code in WORK_CODE_COLUMNS}
             grouped[key]["_notes"] = []
 
-        wc = e["work_code"].strip().upper()
-        if wc in grouped[key]:
-            grouped[key][wc] += e["hours"]
+        wc = e["work_code"].strip()
+        # Match case-insensitively
+        matched = next((c for c in WORK_CODE_COLUMNS if c.upper() == wc.upper()), None)
+        if matched:
+            grouped[key][matched] += e["hours"]
 
         if e["comments"] and e["comments"].strip():
             grouped[key]["_notes"].append(e["comments"].strip())
@@ -143,15 +152,14 @@ def build_sheet_rows(tab_name, db_entries):
     return sheet_rows
 
 
+# ── Sheet operations ──────────────────────────────────────────────────────────
+
 def get_tab_sheet_id(service, tab_name):
     spreadsheet = service.spreadsheets().get(spreadsheetId=MASTER_SHEET_ID).execute()
     for sheet in spreadsheet.get("sheets", []):
         if sheet["properties"]["title"] == tab_name:
             return sheet["properties"]["sheetId"]
-    raise ValueError(
-        f"Tab '{tab_name}' not found in master sheet. "
-        f"Run 1_create_and_share.js first."
-    )
+    raise ValueError(f"Tab '{tab_name}' not found in master sheet. Run 1_create_and_share.js first.")
 
 
 def clear_tab(service, tab_name):
@@ -174,16 +182,14 @@ def format_header(service, sheet_id):
     requests = [{
         "repeatCell": {
             "range": {
-                "sheetId":          sheet_id,
-                "startRowIndex":    0,
-                "endRowIndex":      1,
-                "startColumnIndex": 0,
-                "endColumnIndex":   20
+                "sheetId": sheet_id,
+                "startRowIndex": 0, "endRowIndex": 1,
+                "startColumnIndex": 0, "endColumnIndex": 20
             },
             "cell": {
                 "userEnteredFormat": {
                     "backgroundColor": {"red": 0.29, "green": 0.53, "blue": 0.91},
-                    "textFormat":      {"bold": True, "foregroundColor": {"red": 1, "green": 1, "blue": 1}}
+                    "textFormat": {"bold": True, "foregroundColor": {"red": 1, "green": 1, "blue": 1}}
                 }
             },
             "fields": "userEnteredFormat(backgroundColor,textFormat)"
@@ -195,18 +201,14 @@ def format_header(service, sheet_id):
     ).execute()
 
 
+# ── Main sync function ────────────────────────────────────────────────────────
+
 def sync_user_to_sheet(user_id):
-    """
-    Full re-sync for one user.
-    Called after every add / edit / delete.
-    Returns (success: bool, error_message: str | None)
-    """
     try:
         user = fetch_user(user_id)
         if not user:
             return False, f"User {user_id} not found in DB"
 
-        # Tab name = "Firstname Lastname"
         tab_name   = user["name"].strip()
         service    = get_sheets_service()
         sheet_id   = get_tab_sheet_id(service, tab_name)
