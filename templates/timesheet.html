@@ -10,50 +10,63 @@
 <div class="form-panel">
     <form id="timesheetForm" class="timesheet-form">
         <div class="form-row-top">
+
             <div class="field-date">
                 <label>Date <span class="req">*</span></label>
                 <input type="date" name="work_date" id="work_date" value="{{ today }}" required>
             </div>
+
             <div class="field-show">
-            <label>Show <span class="req">*</span></label>
-            <div class="searchable-select" id="showPickerWrapper">
-                <input type="text" id="show_search" placeholder="Click or type to search shows…"
-                       autocomplete="off" readonly>
-                <input type="hidden" name="show_id" id="show_id">
-                <div class="show-dropdown" id="showDropdown">
-                    <div class="show-dropdown-search">
-                        <input type="text" id="show_filter" placeholder="Type to filter…" autocomplete="off">
+                <label>Show <span class="req">*</span></label>
+                <div class="show-picker" id="showPickerWrapper">
+                    <div class="show-picker-trigger" id="showTrigger">
+                        <span id="showTriggerText" class="placeholder">Click to select a show…</span>
+                        <span class="arrow">▾</span>
                     </div>
-                    <div class="show-options" id="showOptions">
-                        {% for s in shows %}
-                        <div class="show-option" data-value="{{ s.show_id }}"
-                             data-text="{{ s.year }} - {{ s.show_code }} - {{ s.show_name }}">
-                            {{ s.year }} - {{ s.show_code }} - {{ s.show_name }}
+                    <input type="hidden" name="show_id" id="show_id">
+                    <div class="show-picker-dropdown" id="showDropdown">
+                        <div class="show-picker-search">
+                            <input type="text" id="show_filter"
+                                   placeholder="Type to filter shows…"
+                                   autocomplete="off">
                         </div>
-                        {% endfor %}
+                        <div class="show-picker-options" id="showOptionsList">
+                            {% for s in shows %}
+                            <div class="show-opt"
+                                 data-value="{{ s.show_id }}"
+                                 data-text="{{ s.year }} - {{ s.show_code }} - {{ s.show_name }}">
+                                <span class="show-opt-year">{{ s.year }}</span>
+                                <span class="show-opt-code">{{ s.show_code }}</span>
+                                <span class="show-opt-name">{{ s.show_name }}</span>
+                            </div>
+                            {% endfor %}
+                        </div>
                     </div>
                 </div>
             </div>
-        </div>
+
             <div class="field-workcode">
                 <label>Work Code <span class="req">*</span></label>
-                <select name="work_code_id" id="work_code_id" required>
+                <select name="work_code_id" id="work_code_id">
                     <option value="">— Select —</option>
                     {% for code in work_codes %}
                     <option value="{{ code.work_code_id }}">{{ code.code }}</option>
                     {% endfor %}
                 </select>
             </div>
+
             <div class="field-hours">
                 <label>Hours <span class="req">*</span></label>
-                <input type="number" name="hours" id="hours" step="0.25" min="0.25" max="24" placeholder="8" required>
+                <input type="number" name="hours" id="hours"
+                       step="0.25" min="0.25" max="24" placeholder="8">
             </div>
+
         </div>
 
         <div class="form-row-notes">
             <label>Notes / Description <span class="req">*</span></label>
             <textarea name="comments" id="comments" rows="2"
-                placeholder="Required — briefly describe what you worked on" required></textarea>
+                placeholder="Required — briefly describe what you worked on"></textarea>
         </div>
 
         <div class="form-row-submit">
@@ -112,139 +125,189 @@
 </div>
 
 <style>
-.req { color:#d32f2f; }
-.timesheet-form { display:flex; flex-direction:column; gap:14px; }
-.form-row-top {
-    display:grid;
-    grid-template-columns: 150px 1fr 170px 120px;
-    gap:12px;
-    align-items:end;
-}
-.form-row-notes { display:flex; flex-direction:column; gap:6px; }
-.form-row-notes textarea { resize:vertical; }
-.form-row-submit { display:flex; align-items:center; gap:14px; padding-top:4px; }
-.form-error { color:#d32f2f; font-size:13px; font-weight:600; }
-.spinner {
-    width:16px; height:16px;
-    border:2px solid #c5d8f8;
-    border-top-color:#4a86e8;
-    border-radius:50%;
-    animation:spin 0.7s linear infinite;
-    display:inline-block;
-}
-@keyframes spin { to { transform:rotate(360deg); } }
-@media (max-width:900px) {
-    .form-row-top { grid-template-columns:1fr 1fr; }
-    .field-show   { grid-column:1 / -1; }
-}
-..searchable-select { position: relative; }
+.req        { color: #d32f2f; }
+.form-error { color: #d32f2f; font-size: 13px; font-weight: 600; }
 
-.searchable-select #show_search {
+.timesheet-form   { display: flex; flex-direction: column; gap: 14px; }
+.form-row-top     { display: grid; grid-template-columns: 150px 1fr 170px 120px; gap: 12px; align-items: end; }
+.form-row-notes   { display: flex; flex-direction: column; gap: 6px; }
+.form-row-notes textarea { resize: vertical; }
+.form-row-submit  { display: flex; align-items: center; gap: 14px; padding-top: 4px; }
+
+/* ── Show Picker ─────────────────────────────────────── */
+.show-picker {
+    position: relative;
     width: 100%;
+}
+
+.show-picker-trigger {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     padding: 9px 12px;
     border: 1px solid #dde1ea;
     border-radius: 6px;
-    font-size: 14px;
     background: #fafbfc;
-    color: #333;
     cursor: pointer;
+    font-size: 14px;
+    color: #333;
     transition: border-color 0.15s;
+    user-select: none;
 }
-.searchable-select #show_search:focus { outline: none; border-color: #4a86e8; background: #fff; }
-.searchable-select.open #show_search { border-color: #4a86e8; border-radius: 6px 6px 0 0; }
+.show-picker-trigger:hover       { border-color: #4a86e8; }
+.show-picker.open .show-picker-trigger {
+    border-color: #4a86e8;
+    border-radius: 6px 6px 0 0;
+    background: #fff;
+}
+.show-picker-trigger .placeholder { color: #aaa; }
+.show-picker-trigger .arrow { color: #aaa; font-size: 12px; transition: transform 0.15s; }
+.show-picker.open .arrow           { transform: rotate(180deg); }
 
-.show-dropdown {
+.show-picker-dropdown {
     display: none;
     position: absolute;
     top: 100%;
     left: 0; right: 0;
-    z-index: 200;
+    z-index: 300;
     background: #fff;
     border: 1px solid #4a86e8;
     border-top: none;
-    border-radius: 0 0 6px 6px;
-    box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+    border-radius: 0 0 8px 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.12);
 }
-.searchable-select.open .show-dropdown { display: block; }
+.show-picker.open .show-picker-dropdown { display: block; }
 
-.show-dropdown-search {
+.show-picker-search {
     padding: 8px;
     border-bottom: 1px solid #eee;
 }
-.show-dropdown-search input {
+.show-picker-search input {
     width: 100%;
-    padding: 7px 10px;
+    padding: 8px 10px;
     border: 1px solid #dde1ea;
-    border-radius: 4px;
-    font-size: 13px;
-}
-.show-dropdown-search input:focus { outline: none; border-color: #4a86e8; }
-
-.show-options {
-    max-height: 240px;
-    overflow-y: auto;
-}
-.show-option {
-    padding: 9px 12px;
+    border-radius: 5px;
     font-size: 13px;
     color: #333;
+}
+.show-picker-search input:focus { outline: none; border-color: #4a86e8; }
+
+.show-picker-options {
+    max-height: 260px;
+    overflow-y: auto;
+}
+
+.show-opt {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    padding: 9px 12px;
     cursor: pointer;
     border-bottom: 1px solid #f5f5f5;
+    transition: background 0.1s;
 }
-.show-option:hover { background: #f0f4ff; color: #4a86e8; }
-.show-option.hidden { display: none; }
-.show-option.selected { background: #e8f0fe; font-weight: 600; }
+.show-opt:last-child { border-bottom: none; }
+.show-opt:hover      { background: #f0f4ff; }
+.show-opt.hidden     { display: none; }
+.show-opt.selected   { background: #e8f0fe; }
+
+.show-opt-year {
+    font-size: 11px;
+    font-weight: 700;
+    color: #fff;
+    background: #1a2236;
+    padding: 2px 6px;
+    border-radius: 3px;
+    white-space: nowrap;
+}
+.show-opt-code {
+    font-size: 12px;
+    font-weight: 700;
+    color: #4a86e8;
+    white-space: nowrap;
+}
+.show-opt-name {
+    font-size: 13px;
+    color: #444;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ── Spinner ─────────────────────────────────────────── */
+.spinner {
+    width: 16px; height: 16px;
+    border: 2px solid #c5d8f8;
+    border-top-color: #4a86e8;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    display: inline-block;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 900px) {
+    .form-row-top { grid-template-columns: 1fr 1fr; }
+    .field-show   { grid-column: 1 / -1; }
+}
 </style>
 
 <script>
-// ── Show picker ───────────────────────────────────────────
-const showSearch   = document.getElementById("show_search");
-const showIdInput  = document.getElementById("show_id");
-const showDropdown = document.getElementById("showDropdown");
-const showFilter   = document.getElementById("show_filter");
-const showOptions  = document.getElementById("showOptions");
-const wrapper      = document.getElementById("showPickerWrapper");
-const options      = Array.from(document.querySelectorAll(".show-option"));
+// ── Show Picker ───────────────────────────────────────────────────────────────
+const trigger     = document.getElementById("showTrigger");
+const triggerText = document.getElementById("showTriggerText");
+const showIdInput = document.getElementById("show_id");
+const showFilter  = document.getElementById("show_filter");
+const pickerWrap  = document.getElementById("showPickerWrapper");
+const allOpts     = Array.from(document.querySelectorAll(".show-opt"));
 
-// Open on click
-showSearch.addEventListener("click", () => {
-    wrapper.classList.toggle("open");
-    if (wrapper.classList.contains("open")) {
-        setTimeout(() => showFilter.focus(), 50);
+// Toggle open/close
+trigger.addEventListener("click", () => {
+    pickerWrap.classList.toggle("open");
+    if (pickerWrap.classList.contains("open")) {
+        setTimeout(() => showFilter.focus(), 30);
     }
 });
 
-// Filter as user types in the search box inside dropdown
+// Filter as user types
 showFilter.addEventListener("input", function () {
     const q = this.value.toLowerCase();
-    options.forEach(opt => {
+    allOpts.forEach(opt => {
         opt.classList.toggle("hidden", !opt.dataset.text.toLowerCase().includes(q));
     });
 });
 
-// Select an option
-options.forEach(opt => {
+// Select option
+allOpts.forEach(opt => {
     opt.addEventListener("mousedown", function (e) {
         e.preventDefault();
-        showSearch.value  = this.dataset.text;
-        showIdInput.value = this.dataset.value;
-        options.forEach(o => o.classList.remove("selected"));
-        this.classList.add("selected");
-        wrapper.classList.remove("open");
-        showFilter.value = "";
-        options.forEach(o => o.classList.remove("hidden"));
 
-        // Load work codes for selected show
+        // Update trigger display
+        triggerText.textContent = this.dataset.text;
+        triggerText.classList.remove("placeholder");
+
+        // Set hidden value
+        showIdInput.value = this.dataset.value;
+
+        // Mark selected
+        allOpts.forEach(o => o.classList.remove("selected"));
+        this.classList.add("selected");
+
+        // Close & reset filter
+        pickerWrap.classList.remove("open");
+        showFilter.value = "";
+        allOpts.forEach(o => o.classList.remove("hidden"));
+
+        // Load work codes
         fetch(`/api/work-codes/${this.dataset.value}`)
             .then(r => r.json())
             .then(data => {
                 const sel = document.getElementById("work_code_id");
                 sel.innerHTML = '<option value="">— Select —</option>';
                 data.work_codes.forEach(w => {
-                    const opt = document.createElement("option");
-                    opt.value = w.work_code_id;
-                    opt.textContent = w.code;
-                    sel.appendChild(opt);
+                    const o = document.createElement("option");
+                    o.value = w.work_code_id;
+                    o.textContent = w.code;
+                    sel.appendChild(o);
                 });
             });
     });
@@ -252,14 +315,14 @@ options.forEach(opt => {
 
 // Close on outside click
 document.addEventListener("click", function (e) {
-    if (!wrapper.contains(e.target)) {
-        wrapper.classList.remove("open");
+    if (!pickerWrap.contains(e.target)) {
+        pickerWrap.classList.remove("open");
         showFilter.value = "";
-        options.forEach(o => o.classList.remove("hidden"));
+        allOpts.forEach(o => o.classList.remove("hidden"));
     }
 });
 
-// ── Form submit validation ────────────────────────────────
+// ── Form Submit ───────────────────────────────────────────────────────────────
 document.getElementById("timesheetForm").addEventListener("submit", async function (e) {
     e.preventDefault();
     const errEl = document.getElementById("formError");
