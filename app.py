@@ -9,12 +9,8 @@ from email.mime.text import MIMEText
 from dotenv import load_dotenv
 load_dotenv()
 
-try:
-    import psycopg2
-    import psycopg2.extras
-except ImportError:
-    psycopg2 = None
-
+import psycopg2
+import psycopg2.extras
 import sqlite3
 
 # ── App + DB config ───────────────────────────────────────────────────────────
