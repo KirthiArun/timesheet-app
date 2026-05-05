@@ -16,12 +16,15 @@
             </div>
             <div class="field-show">
                 <label>Show <span class="req">*</span></label>
-                <select name="show_id" id="show_id" required>
-                    <option value="">— Select a show —</option>
-                    {% for s in shows %}
-                    <option value="{{ s.show_id }}">{{ s.year }} - {{ s.show_code }} - {{ s.show_name }}</option>
-                    {% endfor %}
-                </select>
+                <div class="searchable-select">
+                    <input type="text" id="show_search" placeholder="Type to search shows…" autocomplete="off">
+                    <select name="show_id" id="show_id" required size="1">
+                        <option value="">— Select a show —</option>
+                        {% for s in shows %}
+                        <option value="{{ s.show_id }}">{{ s.year }} - {{ s.show_code }} - {{ s.show_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
             </div>
             <div class="field-workcode">
                 <label>Work Code <span class="req">*</span></label>
@@ -125,24 +128,88 @@
     .form-row-top { grid-template-columns:1fr 1fr; }
     .field-show   { grid-column:1 / -1; }
 }
+.searchable-select { position: relative; display: flex; flex-direction: column; gap: 4px; }
+.searchable-select input {
+    padding: 9px 12px;
+    border: 1px solid #dde1ea;
+    border-radius: 6px;
+    font-size: 14px;
+    background: #fafbfc;
+    color: #333;
+    transition: border-color 0.15s;
+}
+.searchable-select input:focus {
+    outline: none;
+    border-color: #4a86e8;
+    background: #fff;
+}
+.searchable-select select {
+    display: none;
+    position: absolute;
+    top: 42px;
+    left: 0; right: 0;
+    z-index: 100;
+    max-height: 220px;
+    overflow-y: auto;
+    border: 1px solid #4a86e8;
+    border-radius: 6px;
+    background: #fff;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    font-size: 14px;
+}
+.searchable-select select.open { display: block; }
+.searchable-select select option { padding: 8px 12px; }
 </style>
 
 <script>
-document.getElementById("show_id").addEventListener("change", function () {
-    if (!this.value) return;
-    fetch(`/api/work-codes/${this.value}`)
-        .then(r => r.json())
-        .then(data => {
-            const sel = document.getElementById("work_code_id");
-            sel.innerHTML = '<option value="">— Select —</option>';
-            data.work_codes.forEach(w => {
-                const opt = document.createElement("option");
-                opt.value = w.work_code_id;
-                opt.textContent = w.code;
-                sel.appendChild(opt);
-            });
-        });
+    // Searchable show dropdown
+const showSearch  = document.getElementById("show_search");
+const showSelect  = document.getElementById("show_id");
+const allOptions  = Array.from(showSelect.options);
+
+showSearch.addEventListener("focus", () => {
+    showSelect.classList.add("open");
+    filterShows(showSearch.value);
 });
+
+showSearch.addEventListener("input", () => {
+    showSelect.classList.add("open");
+    filterShows(showSearch.value);
+});
+
+showSearch.addEventListener("blur", () => {
+    // Delay so click on option registers first
+    setTimeout(() => showSelect.classList.remove("open"), 200);
+});
+
+showSelect.addEventListener("change", function () {
+    const selected = allOptions.find(o => o.value === this.value);
+    if (selected) showSearch.value = selected.text;
+    showSelect.classList.remove("open");
+    // Trigger work code refresh
+    if (this.value) {
+        fetch(`/api/work-codes/${this.value}`)
+            .then(r => r.json())
+            .then(data => {
+                const sel = document.getElementById("work_code_id");
+                sel.innerHTML = '<option value="">— Select —</option>';
+                data.work_codes.forEach(w => {
+                    const opt = document.createElement("option");
+                    opt.value = w.work_code_id;
+                    opt.textContent = w.code;
+                    sel.appendChild(opt);
+                });
+            });
+    }
+});
+
+function filterShows(query) {
+    const q = query.toLowerCase();
+    Array.from(showSelect.options).forEach(opt => {
+        opt.style.display = (!opt.value || opt.text.toLowerCase().includes(q)) ? "" : "none";
+    });
+}
+
 
 document.getElementById("timesheetForm").addEventListener("submit", async function (e) {
     e.preventDefault();
