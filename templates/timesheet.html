@@ -350,16 +350,36 @@ document.getElementById("timesheetForm").addEventListener("submit", async functi
         if (!val) { showError(msg); return; }
     }
 
+    const workDate = new Date(document.getElementById("work_date").value);
+    const today    = new Date();
+    const monday   = new Date(today);
+    monday.setDate(today.getDate() - today.getDay() + (today.getDay() === 0 ? -6 : 1));
+    monday.setHours(0, 0, 0, 0);
+    workDate.setHours(0, 0, 0, 0);
+    if (workDate < monday) {
+        showError("Previous weeks are locked and cannot be edited.");
+        return;
+    }
+    
     const saveBtn   = document.getElementById("saveBtn");
     const indicator = document.getElementById("savingIndicator");
     saveBtn.disabled = true;
     saveBtn.style.opacity = "0.5";
     indicator.style.display = "flex";
 
-    try {
+   try {
         const res = await fetch("/timesheet", { method: "POST", body: new FormData(this) });
-        if (res.redirected) { window.location.href = res.url; }
-        else { window.location.reload(); }
+        if (res.redirected) {
+            window.location.href = res.url;
+        } else if (res.ok) {
+            window.location.reload();
+        } else {
+            // Server returned an error — re-enable form
+            saveBtn.disabled = false;
+            saveBtn.style.opacity = "1";
+            indicator.style.display = "none";
+            showError("Could not save entry. Please try again.");
+        }
     } catch {
         saveBtn.disabled = false;
         saveBtn.style.opacity = "1";
