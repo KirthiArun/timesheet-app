@@ -598,15 +598,18 @@ def timesheet():
 
     shows      = db_execute(conn, "SELECT * FROM shows WHERE active_flag = 'Y' ORDER BY year, show_code, show_name").fetchall()
     work_codes = get_show_work_codes(conn)
-    entries    = db_execute(conn, """
+    current_monday = get_monday(date.today())
+    current_friday = current_monday + timedelta(days=4)
+
+    entries = db_execute(conn, """
         SELECT t.entry_id, t.work_date, t.hours, t.comments,
                w.code, w.description, s.show_code, s.show_name, s.year
         FROM timesheet_entries t
         JOIN work_codes w  ON t.work_code_id = w.work_code_id
         LEFT JOIN shows s  ON t.show_id      = s.show_id
-        WHERE t.user_id = ?
+        WHERE t.user_id = ? AND t.work_date BETWEEN ? AND ?
         ORDER BY t.work_date DESC, t.entry_id DESC
-    """, (session["user_id"],)).fetchall()
+    """, (session["user_id"], current_monday.isoformat(), current_friday.isoformat())).fetchall()
 
     conn.close()
     prefill_date = request.args.get("prefill_date", datetime.now().strftime("%Y-%m-%d"))

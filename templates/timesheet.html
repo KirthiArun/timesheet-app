@@ -81,8 +81,8 @@
 
 <div class="panel">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-        <h2 style="margin:0;border:none;padding:0;">My Entries</h2>
-        <a class="button-light" href="{{ url_for('weekly') }}" style="font-size:13px;padding:7px 14px;">Weekly View →</a>
+    <h2 style="margin:0;border:none;padding:0;">This Week's Entries</h2>
+    <a class="button-light" href="{{ url_for('weekly') }}" style="font-size:13px;padding:7px 14px;">Weekly View →</a>
     </div>
     <table>
         <thead>
@@ -112,8 +112,8 @@
                 <td style="white-space:nowrap;">
                     {% if not is_locked(e.work_date) %}
                     <a class="action-link" href="{{ url_for('edit_entry', entry_id=e.entry_id) }}">Edit</a>
-                    <a class="danger-link" href="{{ url_for('delete_entry', entry_id=e.entry_id) }}"
-                       onclick="return confirm('Delete this entry?')">Delete</a>
+                    <a class="danger-link" href="#"
+                       onclick="confirmDelete({{ e.entry_id }}, this); return false;">Delete</a>
                     {% else %}—{% endif %}
                 </td>
             </tr>
@@ -122,6 +122,17 @@
             {% endfor %}
         </tbody>
     </table>
+</div>
+
+<!-- Delete progress overlay -->
+<div id="deleteOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);
+     z-index:9999;align-items:center;justify-content:center;">
+    <div style="background:#fff;border-radius:12px;padding:32px 40px;text-align:center;
+                box-shadow:0 8px 32px rgba(0,0,0,0.2);min-width:260px;">
+        <div class="spinner" style="width:32px;height:32px;border-width:3px;margin:0 auto 16px;"></div>
+        <p style="font-size:15px;font-weight:600;color:#1a2236;margin:0 0 4px;">Deleting entry…</p>
+        <p style="font-size:13px;color:#888;margin:0;">Updating your timesheet</p>
+    </div>
 </div>
 
 <style>
@@ -135,10 +146,7 @@
 .form-row-submit  { display: flex; align-items: center; gap: 14px; padding-top: 4px; }
 
 /* ── Show Picker ─────────────────────────────────────── */
-.show-picker {
-    position: relative;
-    width: 100%;
-}
+.show-picker { position: relative; width: 100%; }
 
 .show-picker-trigger {
     display: flex;
@@ -154,7 +162,7 @@
     transition: border-color 0.15s;
     user-select: none;
 }
-.show-picker-trigger:hover       { border-color: #4a86e8; }
+.show-picker-trigger:hover { border-color: #4a86e8; }
 .show-picker.open .show-picker-trigger {
     border-color: #4a86e8;
     border-radius: 6px 6px 0 0;
@@ -162,7 +170,7 @@
 }
 .show-picker-trigger .placeholder { color: #aaa; }
 .show-picker-trigger .arrow { color: #aaa; font-size: 12px; transition: transform 0.15s; }
-.show-picker.open .arrow           { transform: rotate(180deg); }
+.show-picker.open .arrow { transform: rotate(180deg); }
 
 .show-picker-dropdown {
     display: none;
@@ -177,10 +185,7 @@
 }
 .show-picker.open .show-picker-dropdown { display: block; }
 
-.show-picker-search {
-    padding: 8px;
-    border-bottom: 1px solid #eee;
-}
+.show-picker-search { padding: 8px; border-bottom: 1px solid #eee; }
 .show-picker-search input {
     width: 100%;
     padding: 8px 10px;
@@ -191,10 +196,7 @@
 }
 .show-picker-search input:focus { outline: none; border-color: #4a86e8; }
 
-.show-picker-options {
-    max-height: 260px;
-    overflow-y: auto;
-}
+.show-picker-options { max-height: 260px; overflow-y: auto; }
 
 .show-opt {
     display: flex;
@@ -211,27 +213,11 @@
 .show-opt.selected   { background: #e8f0fe; }
 
 .show-opt-year {
-    font-size: 11px;
-    font-weight: 700;
-    color: #fff;
-    background: #1a2236;
-    padding: 2px 6px;
-    border-radius: 3px;
-    white-space: nowrap;
+    font-size: 11px; font-weight: 700; color: #fff;
+    background: #1a2236; padding: 2px 6px; border-radius: 3px; white-space: nowrap;
 }
-.show-opt-code {
-    font-size: 12px;
-    font-weight: 700;
-    color: #4a86e8;
-    white-space: nowrap;
-}
-.show-opt-name {
-    font-size: 13px;
-    color: #444;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
+.show-opt-code { font-size: 12px; font-weight: 700; color: #4a86e8; white-space: nowrap; }
+.show-opt-name { font-size: 13px; color: #444; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ── Spinner ─────────────────────────────────────────── */
 .spinner {
@@ -251,6 +237,10 @@
 </style>
 
 <script>
+// ── State ─────────────────────────────────────────────────────────────────────
+let submitting = false;
+window.addEventListener("pageshow", () => { submitting = false; });
+
 // ── Show Picker ───────────────────────────────────────────────────────────────
 const trigger     = document.getElementById("showTrigger");
 const triggerText = document.getElementById("showTriggerText");
@@ -259,55 +249,37 @@ const showFilter  = document.getElementById("show_filter");
 const pickerWrap  = document.getElementById("showPickerWrapper");
 const allOpts     = Array.from(document.querySelectorAll(".show-opt"));
 
-// Toggle open/close
 trigger.addEventListener("click", () => {
     const isOpen = pickerWrap.classList.contains("open");
-    if (isOpen) {
-        pickerWrap.classList.remove("open");
-        return;
-    }
+    if (isOpen) { pickerWrap.classList.remove("open"); return; }
 
-    // Position dropdown below the trigger
     const rect     = trigger.getBoundingClientRect();
     const dropdown = document.getElementById("showDropdown");
-    dropdown.style.top  = (rect.bottom + window.scrollY + 4) + "px";
-    dropdown.style.left = rect.left + "px";
+    dropdown.style.top   = (rect.bottom + window.scrollY + 4) + "px";
+    dropdown.style.left  = rect.left + "px";
     dropdown.style.width = Math.max(rect.width, 500) + "px";
 
     pickerWrap.classList.add("open");
     setTimeout(() => showFilter.focus(), 30);
 });
 
-// Filter as user types
 showFilter.addEventListener("input", function () {
     const q = this.value.toLowerCase();
-    allOpts.forEach(opt => {
-        opt.classList.toggle("hidden", !opt.dataset.text.toLowerCase().includes(q));
-    });
+    allOpts.forEach(opt => opt.classList.toggle("hidden", !opt.dataset.text.toLowerCase().includes(q)));
 });
 
-// Select option
 allOpts.forEach(opt => {
     opt.addEventListener("mousedown", function (e) {
         e.preventDefault();
-
-        // Update trigger display
         triggerText.textContent = this.dataset.text;
         triggerText.classList.remove("placeholder");
-
-        // Set hidden value
         showIdInput.value = this.dataset.value;
-
-        // Mark selected
         allOpts.forEach(o => o.classList.remove("selected"));
         this.classList.add("selected");
-
-        // Close & reset filter
         pickerWrap.classList.remove("open");
         showFilter.value = "";
         allOpts.forEach(o => o.classList.remove("hidden"));
 
-        // Load work codes
         fetch(`/api/work-codes/${this.dataset.value}`)
             .then(r => r.json())
             .then(data => {
@@ -323,7 +295,6 @@ allOpts.forEach(opt => {
     });
 });
 
-// Close on outside click
 document.addEventListener("click", function (e) {
     if (!pickerWrap.contains(e.target)) {
         pickerWrap.classList.remove("open");
@@ -332,32 +303,41 @@ document.addEventListener("click", function (e) {
     }
 });
 
+// ── Delete with progress ──────────────────────────────────────────────────────
+function confirmDelete(entryId, link) {
+    if (!confirm("Delete this entry?")) return;
+    const overlay = document.getElementById("deleteOverlay");
+    overlay.style.display = "flex";
+    document.querySelectorAll(".danger-link").forEach(el => el.style.pointerEvents = "none");
+    window.location.href = `/delete-entry/${entryId}`;
+}
+
 // ── Form Submit ───────────────────────────────────────────────────────────────
-let submitting = false;
 document.getElementById("timesheetForm").addEventListener("submit", async function (e) {
     e.preventDefault();
-    if (submitting) return;  // block duplicate submissions
-    submitting = true;
+    if (submitting) return;
 
     const errEl = document.getElementById("formError");
     errEl.style.display = "none";
-    
+
+    // Validate all fields
     const checks = [
-        [document.getElementById("work_date").value.trim(),    "Date is required."],
-        [document.getElementById("show_id").value.trim(),      "Please select a Show."],
-        [document.getElementById("work_code_id").value.trim(), "Please select a Work Code."],
-        [document.getElementById("hours").value.trim(),        "Hours is required."],
-        [document.getElementById("comments").value.trim(),     "Notes are required."],
+        [document.getElementById("work_date").value.trim(),        "Date is required."],
+        [document.getElementById("show_id").value.trim(),          "Please select a Show."],
+        [document.getElementById("work_code_id").value.trim(),     "Please select a Work Code."],
+        [document.getElementById("hours").value.trim(),            "Hours is required."],
+        [(document.getElementById("comments").value || "").trim(), "Notes are required."],
     ];
 
     for (const [val, msg] of checks) {
         if (!val) { showError(msg); return; }
     }
 
+    // Client-side lock check
     const workDate = new Date(document.getElementById("work_date").value);
-    const today    = new Date();
-    const monday   = new Date(today);
-    monday.setDate(today.getDate() - today.getDay() + (today.getDay() === 0 ? -6 : 1));
+    const now      = new Date();
+    const monday   = new Date(now);
+    monday.setDate(now.getDate() - now.getDay() + (now.getDay() === 0 ? -6 : 1));
     monday.setHours(0, 0, 0, 0);
     workDate.setHours(0, 0, 0, 0);
     if (workDate < monday) {
@@ -365,28 +345,29 @@ document.getElementById("timesheetForm").addEventListener("submit", async functi
         return;
     }
 
+    submitting = true;
     const saveBtn   = document.getElementById("saveBtn");
     const indicator = document.getElementById("savingIndicator");
-    saveBtn.disabled = true;
+    saveBtn.disabled      = true;
     saveBtn.style.opacity = "0.5";
     indicator.style.display = "flex";
 
-   try {
+    try {
         const res = await fetch("/timesheet", { method: "POST", body: new FormData(this) });
         if (res.redirected) {
             window.location.href = res.url;
         } else if (res.ok) {
             window.location.reload();
         } else {
-            // Server returned an error — re-enable form
-            saveBtn.disabled = false;
+            submitting = false;
+            saveBtn.disabled      = false;
             saveBtn.style.opacity = "1";
             indicator.style.display = "none";
             showError("Could not save entry. Please try again.");
         }
     } catch {
-        submitting = false;  // reset on error so user can retry
-        saveBtn.disabled = false;
+        submitting = false;
+        saveBtn.disabled      = false;
         saveBtn.style.opacity = "1";
         indicator.style.display = "none";
         showError("Network error — please try again.");
@@ -395,8 +376,9 @@ document.getElementById("timesheetForm").addEventListener("submit", async functi
 
 function showError(msg) {
     const el = document.getElementById("formError");
-    el.textContent = msg;
+    el.textContent   = msg;
     el.style.display = "inline";
+    submitting = false; // reset so user can fix and resubmit
 }
 </script>
 {% endblock %}
