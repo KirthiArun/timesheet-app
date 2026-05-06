@@ -573,11 +573,22 @@ def timesheet():
         elif not comments:
             flash("Notes are required.", "error")
         else:
-            db_execute(conn, """
-                INSERT INTO timesheet_entries
-                (user_id, show_id, work_code_id, work_date, hours, comments, created_at, updated_at)
-                VALUES (?,?,?,?,?,?,?,?)
-            """, (session["user_id"], show_id, work_code_id, work_date, hours, comments, now, now))
+            # Check for duplicate in-flight submission
+            existing = db_execute(conn, """
+                SELECT entry_id FROM timesheet_entries
+                WHERE user_id = ? AND show_id = ? AND work_code_id = ?
+                  AND work_date = ? AND hours = ? AND created_at >= ?
+            """, (session["user_id"], show_id, work_code_id, work_date, hours,
+                  (datetime.now() - timedelta(seconds=10)).strftime("%Y-%m-%d %H:%M:%S")
+            )).fetchone()
+
+            if not existing:
+                db_execute(conn, """
+                    INSERT INTO timesheet_entries
+                    (user_id, show_id, work_code_id, work_date, hours, comments, created_at, updated_at)
+                    VALUES (?,?,?,?,?,?,?,?)
+                """, (session["user_id"], show_id, work_code_id, work_date, hours, comments, now, now))
+
             conn.commit()
             conn.close()
             validate_day(session["user_id"], work_date)

@@ -333,11 +333,15 @@ document.addEventListener("click", function (e) {
 });
 
 // ── Form Submit ───────────────────────────────────────────────────────────────
+let submitting = false;
 document.getElementById("timesheetForm").addEventListener("submit", async function (e) {
     e.preventDefault();
+    if (submitting) return;  // block duplicate submissions
+    submitting = true;
+
     const errEl = document.getElementById("formError");
     errEl.style.display = "none";
-
+    
     const checks = [
         [document.getElementById("work_date").value.trim(),    "Date is required."],
         [document.getElementById("show_id").value.trim(),      "Please select a Show."],
@@ -360,7 +364,7 @@ document.getElementById("timesheetForm").addEventListener("submit", async functi
         showError("Previous weeks are locked and cannot be edited.");
         return;
     }
-    
+
     const saveBtn   = document.getElementById("saveBtn");
     const indicator = document.getElementById("savingIndicator");
     saveBtn.disabled = true;
@@ -381,6 +385,7 @@ document.getElementById("timesheetForm").addEventListener("submit", async functi
             showError("Could not save entry. Please try again.");
         }
     } catch {
+        submitting = false;  // reset on error so user can retry
         saveBtn.disabled = false;
         saveBtn.style.opacity = "1";
         indicator.style.display = "none";
