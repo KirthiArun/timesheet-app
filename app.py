@@ -11,6 +11,7 @@ load_dotenv()
 
 import psycopg
 import sqlite3
+import threading
 
 # ── App + DB config ───────────────────────────────────────────────────────────
 
@@ -347,9 +348,15 @@ def get_show_work_codes(conn, show_id=None):
 def do_sheets_sync(user_id):
     if not SHEETS_SYNC_ENABLED:
         return
-    ok, err = sync_user_to_sheet(user_id)
-    if not ok:
-        flash(f"Entry saved but Google Sheets sync failed: {err}", "warning")
+    def _sync():
+        try:
+            ok, err = sync_user_to_sheet(user_id)
+            if not ok:
+                print(f"[SheetsSync] Background sync failed for user {user_id}: {err}")
+        except Exception as e:
+            print(f"[SheetsSync] Background sync error: {e}")
+    thread = threading.Thread(target=_sync, daemon=True)
+    thread.start()
 
 
 def generate_password(length=10):
