@@ -345,13 +345,17 @@ document.getElementById("timesheetForm").addEventListener("submit", async functi
         return;
     }
 
-    submitting = true;
+   submitting = true;
+
+    // Capture form data BEFORE locking (disabled fields are excluded from FormData)
+    const formData = new FormData(this);
+
     lockForm();
 
     try {
         const res = await fetch("/timesheet", {
             method: "POST",
-            body: new FormData(this),
+            body: formData,
             redirect: "manual"
         });
         // redirect:"manual" gives status 0 on redirect = success
