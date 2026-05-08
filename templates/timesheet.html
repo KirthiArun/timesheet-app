@@ -349,16 +349,24 @@ document.getElementById("timesheetForm").addEventListener("submit", async functi
     lockForm();
 
     try {
-        const res = await fetch("/timesheet", { method: "POST", body: new FormData(this) });
-        if (res.redirected) {
-            window.location.href = res.url;
-        } else if (res.ok) {
-            window.location.reload();
+        const res = await fetch("/timesheet", {
+            method: "POST",
+            body: new FormData(this),
+            redirect: "manual"
+        });
+        // redirect:"manual" gives status 0 on redirect = success
+        // res.ok = 2xx = success
+        // res.redirected = followed redirect = success
+        if (res.status === 0 || res.ok || res.redirected) {
+            window.location.href = "/timesheet";
         } else {
+            const text = await res.text();
+            console.error("Server error:", res.status, text.substring(0, 200));
             unlockForm();
             showError("Could not save entry. Please try again.");
         }
-    } catch {
+    } catch (err) {
+        console.error("Fetch error:", err);
         unlockForm();
         showError("Network error — please try again.");
     }
