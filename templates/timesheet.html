@@ -346,11 +346,7 @@ document.getElementById("timesheetForm").addEventListener("submit", async functi
     }
 
     submitting = true;
-    const saveBtn   = document.getElementById("saveBtn");
-    const indicator = document.getElementById("savingIndicator");
-    saveBtn.disabled      = true;
-    saveBtn.style.opacity = "0.5";
-    indicator.style.display = "flex";
+    lockForm();
 
     try {
         const res = await fetch("/timesheet", { method: "POST", body: new FormData(this) });
@@ -359,26 +355,59 @@ document.getElementById("timesheetForm").addEventListener("submit", async functi
         } else if (res.ok) {
             window.location.reload();
         } else {
-            submitting = false;
-            saveBtn.disabled      = false;
-            saveBtn.style.opacity = "1";
-            indicator.style.display = "none";
+            unlockForm();
             showError("Could not save entry. Please try again.");
         }
     } catch {
-        submitting = false;
-        saveBtn.disabled      = false;
-        saveBtn.style.opacity = "1";
-        indicator.style.display = "none";
+        unlockForm();
         showError("Network error — please try again.");
     }
 });
+
+function lockForm() {
+    const saveBtn   = document.getElementById("saveBtn");
+    const indicator = document.getElementById("savingIndicator");
+
+    // Disable all inputs
+    document.getElementById("work_date").disabled    = true;
+    document.getElementById("work_code_id").disabled = true;
+    document.getElementById("hours").disabled         = true;
+    document.getElementById("comments").disabled      = true;
+
+    // Disable show picker trigger
+    document.getElementById("showTrigger").style.pointerEvents = "none";
+    document.getElementById("showTrigger").style.opacity       = "0.5";
+    pickerWrap.classList.remove("open");
+
+    // Disable save button + show spinner
+    saveBtn.disabled         = true;
+    saveBtn.style.opacity    = "0.5";
+    indicator.style.display  = "flex";
+}
+
+function unlockForm() {
+    submitting = false;
+    const saveBtn   = document.getElementById("saveBtn");
+    const indicator = document.getElementById("savingIndicator");
+
+    document.getElementById("work_date").disabled    = false;
+    document.getElementById("work_code_id").disabled = false;
+    document.getElementById("hours").disabled         = false;
+    document.getElementById("comments").disabled      = false;
+
+    document.getElementById("showTrigger").style.pointerEvents = "";
+    document.getElementById("showTrigger").style.opacity       = "";
+
+    saveBtn.disabled        = false;
+    saveBtn.style.opacity   = "1";
+    indicator.style.display = "none";
+}
 
 function showError(msg) {
     const el = document.getElementById("formError");
     el.textContent   = msg;
     el.style.display = "inline";
-    submitting = false; // reset so user can fix and resubmit
+    submitting = false;
 }
 </script>
 {% endblock %}
