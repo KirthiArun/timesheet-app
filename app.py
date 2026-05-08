@@ -345,18 +345,32 @@ def get_show_work_codes(conn, show_id=None):
     ).fetchall()
 
 
+_sync_timers = {}
+
 def do_sheets_sync(user_id):
     if not SHEETS_SYNC_ENABLED:
         return
+
+    # Cancel any pending sync for this user — debounce rapid saves
+    if user_id in _sync_timers:
+        _sync_timers[user_id].cancel()
+
     def _sync():
         try:
+            _sync_timers.pop(user_id, None)
             ok, err = sync_user_to_sheet(user_id)
             if not ok:
-                print(f"[SheetsSync] Background sync failed for user {user_id}: {err}")
+                print(f"[SheetsSync] Sync failed for user {user_id}: {err}")
+            else:
+                print(f"[SheetsSync] Sync complete for user {user_id}")
         except Exception as e:
-            print(f"[SheetsSync] Background sync error: {e}")
-    thread = threading.Thread(target=_sync, daemon=True)
-    thread.start()
+            print(f"[SheetsSync] Sync error for user {user_id}: {e}")
+
+    # Wait 3 seconds after last save before syncing
+    # Batches rapid consecutive saves into one sync call
+    timer = threading.Timer(3.0, _sync)
+    _sync_timers[user_id] = timer
+    timer.start()
 
 
 def generate_password(length=10):
@@ -396,6 +410,19 @@ def logout():
     return redirect(url_for("login"))
 
 
+@app.route("/notifications/mark-read", methods=["POST"])
+@login_required
+def mark_notifications_read():
+    conn = get_db()
+    if session["role"] == "admin":
+        db_execute(conn, "UPDATE notifications SET is_read = 'Y' WHERE is_read = 'N'")
+    else:
+        db_execute(conn, "UPDATE notifications SET is_read = 'Y' WHERE user_id = ? AND is_read = 'N'",
+                   (session["user_id"],))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+    
 # ── Routes: Dashboard ─────────────────────────────────────────────────────────
 
 @app.route("/dashboard")
@@ -1080,6 +1107,47 @@ def vacation():
         total_hours = sum(e["hours"] for e in entries)
         name        = session.get("name")
 
+        # ── Auto-log timesheet entries ────────────────────────────────────────
+        conn = get_db()
+        now  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Get Vacation show and work code IDs
+        vac_show = db_execute(conn, """
+            SELECT show_id FROM shows
+            WHERE LOWER(show_name) = 'vacation' LIMIT 1
+        """).fetchone()
+
+        vac_code = db_execute(conn, """
+            SELECT work_code_id FROM work_codes
+            WHERE LOWER(code) = 'vacation' LIMIT 1
+        """).fetchone()
+
+        logged_entries = []
+        if vac_show and vac_code:
+            for e in entries:
+                # Skip if already logged for this date
+                existing = db_execute(conn, """
+                    SELECT entry_id FROM timesheet_entries
+                    WHERE user_id = ? AND work_date = ? AND show_id = ? AND work_code_id = ?
+                """, (session["user_id"], e["date"], vac_show["show_id"], vac_code["work_code_id"])).fetchone()
+
+                if not existing:
+                    db_execute(conn, """
+                        INSERT INTO timesheet_entries
+                        (user_id, show_id, work_code_id, work_date, hours, comments, created_at, updated_at)
+                        VALUES (?,?,?,?,?,?,?,?)
+                    """, (session["user_id"], vac_show["show_id"], vac_code["work_code_id"],
+                          e["date"], e["hours"], notes or "Vacation", now, now))
+                    logged_entries.append(e)
+
+            conn.commit()
+        conn.close()
+
+        # Sync to sheet in background
+        if logged_entries:
+            do_sheets_sync(session["user_id"])
+
+        # ── Send email ────────────────────────────────────────────────────────
         rows_html = "".join(f"""
             <tr>
                 <td style="padding:8px 14px;border-bottom:1px solid #eee;">
@@ -1119,7 +1187,7 @@ def vacation():
                 </table>
                 {notes_section}
                 <p style="color:#888;font-size:12px;margin-top:20px;">
-                    This is a notification only. Hours should be logged in the timesheet separately.
+                    Hours have been automatically logged in the timesheet and synced to the master sheet.
                 </p>
             </div>
             <p style="color:#aaa;font-size:12px;margin-top:20px;text-align:center;">
@@ -1127,34 +1195,35 @@ def vacation():
             </p>
         </div>"""
 
+        # Send email in background thread — prevents 502 timeout
         smtp_host = os.environ.get("SMTP_HOST", "")
         smtp_port = int(os.environ.get("SMTP_PORT", 587))
         smtp_user = os.environ.get("SMTP_USER", "")
         smtp_pass = os.environ.get("SMTP_PASS", "")
 
-        if not smtp_host or not smtp_user:
-            flash("Email is not configured on this server. Contact your admin.", "error")
-            return redirect(url_for("vacation"))
+        def _send_email():
+            try:
+                if not smtp_host or not smtp_user:
+                    print("[Vacation] SMTP not configured — skipping email")
+                    return
+                msg = MIMEMultipart("alternative")
+                msg["Subject"] = f"🌴 Vacation Notice — {name} ({len(entries)} day{'s' if len(entries) != 1 else ''}, {total_hours} hrs)"
+                msg["From"]    = smtp_user
+                msg["To"]      = ", ".join(VACATION_NOTIFY_EMAILS)
+                msg["Reply-To"] = smtp_user
+                msg.attach(MIMEText(html_body, "html"))
+                with smtplib.SMTP(smtp_host, smtp_port) as server:
+                    server.starttls()
+                    server.login(smtp_user, smtp_pass)
+                    server.sendmail(smtp_user, VACATION_NOTIFY_EMAILS, msg.as_string())
+                print(f"[Vacation] Email sent for {name}")
+            except Exception as e:
+                print(f"[Vacation] Email failed: {e}")
 
-        try:
-            msg = MIMEMultipart("alternative")
-            msg["Subject"] = f"🌴 Vacation Notice — {name} ({len(entries)} day{'s' if len(entries) != 1 else ''}, {total_hours} hrs)"
-            msg["From"]    = smtp_user
-            msg["To"]      = ", ".join(VACATION_NOTIFY_EMAILS)
-            msg["Reply-To"] = smtp_user
-            msg.attach(MIMEText(html_body, "html"))
+        threading.Thread(target=_send_email, daemon=True).start()
 
-            with smtplib.SMTP(smtp_host, smtp_port) as server:
-                server.starttls()
-                server.login(smtp_user, smtp_pass)
-                server.sendmail(smtp_user, VACATION_NOTIFY_EMAILS, msg.as_string())
-
-            flash(f"✅ Vacation notification sent for {len(entries)} day(s), {total_hours} total hours.", "success")
-            return redirect(url_for("vacation"))
-
-        except Exception as e:
-            flash(f"Failed to send email: {str(e)}", "error")
-            return redirect(url_for("vacation"))
+        flash(f"✅ Vacation request submitted — {len(entries)} day(s), {total_hours} hrs logged and team notified.", "success")
+        return redirect(url_for("vacation"))
 
     return render_template("vacation.html")
 

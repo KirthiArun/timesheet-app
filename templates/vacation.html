@@ -2,19 +2,17 @@
 {% block content %}
 <div class="page-header">
     <div>
-        <h1>🌴 Inform Vacation</h1>
-        <p>Select your vacation dates and hours. One email will be sent to the team.</p>
+        <h1>🌴 Request Vacation</h1>
+        <p>Select your vacation dates and hours. Your hours will be logged automatically and the team will be notified.</p>
     </div>
 </div>
 
 <div class="form-panel">
-    <form method="POST" id="vacationForm">
+    <form id="vacationForm">
 
-        <div id="dateRows">
-            <!-- Row template — first row added by JS below -->
-        </div>
+        <div id="dateRows"></div>
 
-        <button type="button" onclick="addRow()"
+        <button type="button" id="addRowBtn" onclick="addRow()"
                 style="background:#f0f4ff;color:#4a86e8;border:1px dashed #4a86e8;
                        padding:9px 18px;border-radius:6px;font-size:14px;
                        font-weight:600;cursor:pointer;margin-top:4px;width:100%;">
@@ -23,30 +21,29 @@
 
         <div style="margin-top:20px;">
             <label>Notes <span style="color:#888;font-weight:400;">(optional — reason, context, etc.)</span></label>
-            <textarea name="vac_notes" rows="2"
+            <textarea id="vac_notes" name="vac_notes" rows="2"
                 placeholder="e.g. Family trip, medical appointment…"
                 style="margin-top:6px;"></textarea>
         </div>
 
-        <div style="margin-top:20px;display:flex;align-items:center;gap:16px;">
-            <button type="submit" id="sendBtn">Send Vacation Notice</button>
+        <div style="margin-top:20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+            <button type="submit" id="sendBtn">Submit Vacation Request</button>
             <div id="sendingIndicator"
                  style="display:none;align-items:center;gap:8px;color:#4a86e8;font-size:14px;font-weight:600;">
-                <div class="spinner"></div> Sending…
+                <div class="spinner"></div> Submitting… this may take a moment
             </div>
+            <span id="formError" style="color:#d32f2f;font-size:13px;font-weight:600;display:none;"></span>
         </div>
 
-        <p style="margin-top:14px;font-size:12px;color:#aaa;">
-            📧 Will be sent to: kirthika@zydesoft.com, sivanraj@zydesoft.com
-            <br>Remember to also log your vacation hours in
-            <a href="{{ url_for('timesheet') }}" style="color:#4a86e8;">My Timesheet</a>.
-        </p>
+        <div style="margin-top:16px;padding:12px 14px;background:#f0f4ff;border-radius:6px;font-size:13px;color:#555;line-height:1.6;">
+            ✅ Your vacation hours will be <strong>automatically logged</strong> in your timesheet<br>
+            📧 A notification will be sent to <strong>kirthika@zydesoft.com</strong> and <strong>sivanraj@zydesoft.com</strong>
+        </div>
     </form>
 </div>
 
-<!-- Preview panel — shown after rows are filled -->
 <div class="panel" id="previewPanel" style="display:none;">
-    <h2>Preview</h2>
+    <h2>Summary</h2>
     <table id="previewTable">
         <thead>
             <tr><th>Date</th><th>Hours</th></tr>
@@ -69,35 +66,36 @@
     align-items: end;
     margin-bottom: 10px;
 }
-.vac-row label { font-size:12px; font-weight:600; color:#666; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:6px; display:block; }
+.vac-row label {
+    font-size: 12px; font-weight: 600; color: #666;
+    text-transform: uppercase; letter-spacing: 0.4px;
+    margin-bottom: 6px; display: block;
+}
 .remove-btn {
-    background: #ffebee;
-    color: #d32f2f;
-    border: none;
-    border-radius: 6px;
-    width: 36px;
-    height: 38px;
-    font-size: 18px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    background: #ffebee; color: #d32f2f;
+    border: none; border-radius: 6px;
+    width: 36px; height: 38px; font-size: 18px;
+    cursor: pointer; display: flex;
+    align-items: center; justify-content: center;
     transition: background 0.15s;
 }
-.remove-btn:hover { background:#ffcdd2; }
+.remove-btn:hover { background: #ffcdd2; }
+.remove-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
 .spinner {
-    width:16px; height:16px;
-    border:2px solid #c5d8f8;
-    border-top-color:#4a86e8;
-    border-radius:50%;
-    animation:spin 0.7s linear infinite;
-    display:inline-block;
+    width: 16px; height: 16px;
+    border: 2px solid #c5d8f8;
+    border-top-color: #4a86e8;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    display: inline-block;
 }
-@keyframes spin { to { transform:rotate(360deg); } }
+@keyframes spin { to { transform: rotate(360deg); } }
 </style>
 
 <script>
-let rowCount = 0;
+let rowCount  = 0;
+let submitting = false;
 
 function addRow(defaultDate = "") {
     rowCount++;
@@ -128,7 +126,7 @@ function addRow(defaultDate = "") {
 
 function removeRow(id) {
     const rows = document.querySelectorAll(".vac-row");
-    if (rows.length <= 1) return; // keep at least one
+    if (rows.length <= 1) return;
     document.getElementById(id)?.remove();
     updatePreview();
 }
@@ -136,7 +134,6 @@ function removeRow(id) {
 function updatePreview() {
     const dates = [...document.querySelectorAll("input[name='vac_date']")].map(i => i.value);
     const hours = [...document.querySelectorAll("input[name='vac_hours']")].map(i => parseFloat(i.value) || 0);
-
     const rows  = dates.map((d, i) => ({ date: d, hours: hours[i] })).filter(r => r.date && r.hours > 0);
     const total = rows.reduce((s, r) => s + r.hours, 0);
 
@@ -144,10 +141,9 @@ function updatePreview() {
     if (rows.length === 0) { panel.style.display = "none"; return; }
     panel.style.display = "block";
 
-    const tbody = document.getElementById("previewBody");
-    tbody.innerHTML = rows.map(r => {
-        const d = new Date(r.date + "T00:00:00");
-        const label = d.toLocaleDateString("en-US", { weekday:"long", month:"long", day:"numeric", year:"numeric" });
+    document.getElementById("previewBody").innerHTML = rows.map(r => {
+        const d     = new Date(r.date + "T00:00:00");
+        const label = d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
         return `<tr>
             <td style="padding:8px 12px;border-bottom:1px solid #eee;">${label}</td>
             <td style="padding:8px 12px;border-bottom:1px solid #eee;font-weight:600;">${r.hours} hrs</td>
@@ -157,13 +153,72 @@ function updatePreview() {
     document.getElementById("previewTotal").textContent = total + " hrs";
 }
 
-// Submit — disable button + show spinner
-document.getElementById("vacationForm").addEventListener("submit", function () {
-    const btn = document.getElementById("sendBtn");
-    const ind = document.getElementById("sendingIndicator");
-    btn.disabled = true;
-    btn.style.opacity = "0.5";
-    ind.style.display = "flex";
+function lockForm() {
+    submitting = true;
+    document.querySelectorAll("input[name='vac_date'], input[name='vac_hours'], #vac_notes").forEach(el => el.disabled = true);
+    document.querySelectorAll(".remove-btn").forEach(btn => btn.disabled = true);
+    document.getElementById("addRowBtn").disabled = true;
+    document.getElementById("addRowBtn").style.opacity = "0.4";
+    document.getElementById("sendBtn").disabled = true;
+    document.getElementById("sendBtn").style.opacity = "0.5";
+    document.getElementById("sendingIndicator").style.display = "flex";
+    document.getElementById("formError").style.display = "none";
+}
+
+function unlockForm() {
+    submitting = false;
+    document.querySelectorAll("input[name='vac_date'], input[name='vac_hours'], #vac_notes").forEach(el => el.disabled = false);
+    document.querySelectorAll(".remove-btn").forEach(btn => btn.disabled = false);
+    document.getElementById("addRowBtn").disabled = false;
+    document.getElementById("addRowBtn").style.opacity = "1";
+    document.getElementById("sendBtn").disabled = false;
+    document.getElementById("sendBtn").style.opacity = "1";
+    document.getElementById("sendingIndicator").style.display = "none";
+}
+
+function showError(msg) {
+    const el = document.getElementById("formError");
+    el.textContent   = msg;
+    el.style.display = "inline";
+}
+
+// Submit via fetch to avoid page reload timeout issues
+document.getElementById("vacationForm").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    if (submitting) return;
+
+    // Validate
+    const dates = [...document.querySelectorAll("input[name='vac_date']")].map(i => i.value.trim());
+    const hours = [...document.querySelectorAll("input[name='vac_hours']")].map(i => i.value.trim());
+    const valid = dates.some((d, i) => d && hours[i]);
+    if (!valid) {
+        showError("Please add at least one date with hours.");
+        return;
+    }
+
+    lockForm();
+
+    try {
+        const formData = new FormData(this);
+        // Re-add disabled fields manually
+        document.querySelectorAll("input[name='vac_date']").forEach(el => formData.append("vac_date", el.value));
+        document.querySelectorAll("input[name='vac_hours']").forEach(el => formData.append("vac_hours", el.value));
+        formData.append("vac_notes", document.getElementById("vac_notes").value);
+
+        const res = await fetch("/vacation", { method: "POST", body: formData });
+
+        if (res.redirected) {
+            window.location.href = res.url;
+        } else if (res.ok) {
+            window.location.href = "/vacation";
+        } else {
+            unlockForm();
+            showError("Something went wrong. Please try again.");
+        }
+    } catch (err) {
+        unlockForm();
+        showError("Network error — please check your connection and try again.");
+    }
 });
 
 // Start with one row defaulting to today

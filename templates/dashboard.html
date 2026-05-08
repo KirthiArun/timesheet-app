@@ -96,6 +96,7 @@
     <p style="color:#43a047;font-weight:600;">✓ All team members are on track this week.</p>
     {% endfor %}
 </div>
+
 <div class="panel" id="adminMissingMonthPanel" style="display:none;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
         <h2 style="margin:0;border:none;padding:0;">Missing Hours — This Month</h2>
@@ -125,7 +126,6 @@
 {# ── USER VIEW ───────────────────────────────────────────── #}
 {% else %}
 
-{# Week progress bar #}
 {% set pct = ((pending_summary.entered / 40) * 100) | round | int %}
 <div class="week-status-bar">
     <div class="week-status-header">
@@ -148,7 +148,6 @@
     </div>
 </div>
 
-{# Day cards — click to quick-fill #}
 <div class="day-status-grid">
     {% for d in pending_summary.days %}
     <div class="day-status-card {% if d.missing == 0 %}day-complete{% elif d.entered > 0 %}day-partial{% else %}day-empty{% endif %}"
@@ -177,35 +176,42 @@
         {% endif %}
     </div>
 
-    {% for group in grouped_recent_entries %}
-    <div class="date-group">
-        <h3>{{ group.date }}</h3>
-        <table>
-            <thead>
-                <tr>
-                    {% if session.get("role") == "admin" %}<th>User</th>{% endif %}
-                    <th>Show</th><th>Work Code</th><th>Hours</th><th>Notes</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for e in group.entries %}
-                <tr>
-                    {% if session.get("role") == "admin" %}<td>{{ e.name }}</td>{% endif %}
-                    <td>
-                        <span class="badge dark">{{ e.show_code or "-" }}</span>
-                        <span style="font-size:12px;color:#666;">{{ e.show_name or "" }}</span>
-                    </td>
-                    <td><span class="badge">{{ e.code }}</span></td>
-                    <td>{{ e.hours }}</td>
-                    <td style="font-size:13px;color:#555;">{{ e.comments }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
+    {% if grouped_recent_entries %}
+    <table class="entries-table">
+        <thead>
+            <tr>
+                {% if session.get("role") == "admin" %}<th class="col-user">User</th>{% endif %}
+                <th class="col-show">Show</th>
+                <th class="col-code">Work Code</th>
+                <th class="col-hours">Hours</th>
+                <th class="col-notes">Notes</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for group in grouped_recent_entries %}
+            <tr class="date-divider-row">
+                <td colspan="{% if session.get('role') == 'admin' %}5{% else %}4{% endif %}">
+                    {{ group.date }}
+                </td>
+            </tr>
+            {% for e in group.entries %}
+            <tr>
+                {% if session.get("role") == "admin" %}<td class="col-user">{{ e.name }}</td>{% endif %}
+                <td class="col-show">
+                    <span class="badge dark">{{ e.show_code or "-" }}</span>
+                    <span style="font-size:12px;color:#666;">{{ e.show_name or "" }}</span>
+                </td>
+                <td class="col-code"><span class="badge">{{ e.code }}</span></td>
+                <td class="col-hours">{{ e.hours }}</td>
+                <td class="col-notes">{{ e.comments }}</td>
+            </tr>
+            {% endfor %}
+            {% endfor %}
+        </tbody>
+    </table>
     {% else %}
     <p style="color:#aaa;text-align:center;padding:24px;">No entries yet this week.</p>
-    {% endfor %}
+    {% endif %}
 </div>
 
 <style>
@@ -258,10 +264,7 @@
     transition:box-shadow 0.15s, transform 0.1s;
 }
 .day-status-card.day-empty,
-.day-status-card.day-partial {
-    cursor:pointer;
-    border-top-color:#ef5350;
-}
+.day-status-card.day-partial { cursor:pointer; border-top-color:#ef5350; }
 .day-status-card.day-partial  { border-top-color:#ff9800; }
 .day-status-card.day-complete { border-top-color:#43a047; }
 .day-status-card:hover.day-empty,
@@ -277,11 +280,42 @@
 .day-empty   .day-status-label { color:#ef5350; }
 .day-partial .day-status-label { color:#ff9800; }
 .day-action { font-size:11px; color:#4a86e8; margin-top:6px; font-weight:600; }
+
+/* Recent entries — single aligned table */
+.entries-table {
+    table-layout: fixed;
+    width: 100%;
+}
+.entries-table .col-user  { width: 15%; }
+.entries-table .col-show  { width: 38%; }
+.entries-table .col-code  { width: 13%; }
+.entries-table .col-hours { width: 8%; text-align: right; }
+.entries-table .col-notes { width: 26%; font-size: 13px; color: #555; }
+
+.date-divider-row td {
+    background: #f5f7fa;
+    font-size: 12px;
+    font-weight: 700;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 8px 12px;
+    border-top: 2px solid #eee;
+}
+.date-divider-row:first-child td { border-top: none; }
 </style>
 
 <script>
 function toggleNotifications() {
-    document.getElementById("notificationDropdown").classList.toggle("show");
+    const dropdown = document.getElementById("notificationDropdown");
+    dropdown.classList.toggle("show");
+    if (dropdown.classList.contains("show")) {
+        fetch("/notifications/mark-read", { method: "POST" })
+            .then(() => {
+                const badge = document.querySelector(".bell-count");
+                if (badge) badge.remove();
+            });
+    }
 }
 
 document.addEventListener("click", function (e) {
@@ -303,7 +337,6 @@ function toggleInner(id) {
     el.classList.toggle("show-panel");
 }
 
-// Quick-fill: redirect to timesheet with date pre-selected
 function quickFill(date) {
     window.location.href = `/timesheet?prefill_date=${date}`;
 }
