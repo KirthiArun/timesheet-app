@@ -231,12 +231,15 @@ addRow(today);
 {% if vacation_entries %}
 <div class="panel">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-        <h2 style="margin:0;border:none;padding:0;">My Vacations — {{ year }}</h2>
-        <span style="font-size:13px;color:#888;font-weight:600;">
-            Total: {{ vacation_entries | sum(attribute='hours') }} hrs
-            &nbsp;·&nbsp;
-            {{ vacation_entries | length }} day{% if vacation_entries | length != 1 %}s{% endif %}
-        </span>
+    <h2 style="margin:0;border:none;padding:0;">My Vacations — {{ year }}</h2>
+        <div style="text-align:right;">
+            <div style="font-size:22px;font-weight:700;color:#1a2236;">
+                {{ vacation_entries | length }} day{% if vacation_entries | length != 1 %}s{% endif %}
+            </div>
+            <div style="font-size:13px;color:#888;">
+                {{ vacation_entries | sum(attribute='hours') }} hrs total
+            </div>
+        </div>
     </div>
     <table>
         <thead>
