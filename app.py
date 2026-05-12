@@ -1273,6 +1273,32 @@ with app.app_context():
 def health():
     return {"status": "ok"}, 200
 
+@app.route("/admin/users/edit/<int:user_id>", methods=["POST"])
+@login_required
+@admin_required
+def admin_edit_user(user_id):
+    name  = request.form.get("name", "").strip()
+    email = request.form.get("email", "").strip().lower()
+    role  = request.form.get("role", "user")
+
+    if not name or not email:
+        flash("Name and email are required.", "error")
+        return redirect(url_for("admin_users"))
+
+    conn = get_db()
+    try:
+        db_execute(conn, """
+            UPDATE users SET name = ?, email = ?, role = ?
+            WHERE user_id = ?
+        """, (name, email, role, user_id))
+        conn.commit()
+        flash(f"User updated successfully.", "success")
+    except Exception:
+        conn.rollback()
+        flash("Email already in use by another user.", "error")
+    conn.close()
+    return redirect(url_for("admin_users"))
+    
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=False, host="0.0.0.0", port=port)

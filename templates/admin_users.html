@@ -44,12 +44,29 @@
         <thead>
             <tr><th>Name</th><th>Email</th><th>Role</th><th>Reset Password</th><th>Action</th></tr>
         </thead>
-        <tbody>
+         <tbody>
             {% for u in users %}
-            <tr>
-                <td>{{ u.name }}</td>
-                <td>{{ u.email }}</td>
-                <td><span class="badge {% if u.role == 'admin' %}dark{% endif %}">{{ u.role }}</span></td>
+            <tr id="row_{{ u.user_id }}">
+                <td>
+                    <span class="display-val" id="name_display_{{ u.user_id }}">{{ u.name }}</span>
+                    <input class="edit-input" id="name_input_{{ u.user_id }}" value="{{ u.name }}"
+                           style="display:none;width:100%;padding:5px 8px;font-size:13px;">
+                </td>
+                <td>
+                    <span class="display-val" id="email_display_{{ u.user_id }}">{{ u.email }}</span>
+                    <input class="edit-input" id="email_input_{{ u.user_id }}" value="{{ u.email }}"
+                           style="display:none;width:100%;padding:5px 8px;font-size:13px;">
+                </td>
+                <td>
+                    <span class="display-val" id="role_display_{{ u.user_id }}">
+                        <span class="badge {% if u.role == 'admin' %}dark{% endif %}">{{ u.role }}</span>
+                    </span>
+                    <select class="edit-input" id="role_input_{{ u.user_id }}"
+                            style="display:none;padding:5px 8px;font-size:13px;">
+                        <option value="user" {% if u.role == 'user' %}selected{% endif %}>user</option>
+                        <option value="admin" {% if u.role == 'admin' %}selected{% endif %}>admin</option>
+                    </select>
+                </td>
                 <td>
                     <form method="POST" action="{{ url_for('admin_reset_password', user_id=u.user_id) }}"
                           style="display:flex;gap:6px;align-items:center;" onsubmit="return confirmReset(this)">
@@ -62,12 +79,21 @@
                                 style="padding:6px 12px;font-size:12px;background:#e65100;">Reset</button>
                     </form>
                 </td>
-                <td>
-                    {# ADD before it #}
-                    <a class="action-link" href="{{ url_for('admin_sync_user', user_id=u.user_id) }}">↻ Sync</a>
+                <td style="white-space:nowrap;">
+                    <a class="action-link" href="#"
+                       id="edit_btn_{{ u.user_id }}"
+                       onclick="startEdit({{ u.user_id }}); return false;">Edit</a>
+                    <a class="action-link" href="#"
+                       id="save_btn_{{ u.user_id }}"
+                       style="display:none;color:#43a047;"
+                       onclick="saveEdit({{ u.user_id }}); return false;">Save</a>
+                    <a class="action-link" href="#"
+                       id="cancel_btn_{{ u.user_id }}"
+                       style="display:none;color:#888;"
+                       onclick="cancelEdit({{ u.user_id }}); return false;">Cancel</a>
                     {% if u.user_id != session.get('user_id') %}
                     <a class="danger-link" href="{{ url_for('admin_delete_user', user_id=u.user_id) }}"
-                       onclick="return confirm('Delete {{ u.name }}? All their entries will remain but they cannot log in.')">Delete</a>
+                       onclick="return confirm('Delete {{ u.name }}?')">Delete</a>
                     {% else %}
                     <span class="muted">You</span>
                     {% endif %}
@@ -99,6 +125,47 @@ function confirmReset(form) {
         return confirm("No password entered — a random one will be generated. The new password will be shown after reset. Continue?");
     }
     return confirm(`Reset password to "${pw}"? Make sure to share it with the user.`);
+}
+function startEdit(userId) {
+    ["name", "email", "role"].forEach(field => {
+        document.getElementById(`${field}_display_${userId}`).style.display = "none";
+        document.getElementById(`${field}_input_${userId}`).style.display = "inline-block";
+    });
+    document.getElementById(`edit_btn_${userId}`).style.display   = "none";
+    document.getElementById(`save_btn_${userId}`).style.display   = "inline";
+    document.getElementById(`cancel_btn_${userId}`).style.display = "inline";
+}
+
+function cancelEdit(userId) {
+    ["name", "email", "role"].forEach(field => {
+        document.getElementById(`${field}_display_${userId}`).style.display = "inline";
+        document.getElementById(`${field}_input_${userId}`).style.display   = "none";
+    });
+    document.getElementById(`edit_btn_${userId}`).style.display   = "inline";
+    document.getElementById(`save_btn_${userId}`).style.display   = "none";
+    document.getElementById(`cancel_btn_${userId}`).style.display = "none";
+}
+
+async function saveEdit(userId) {
+    const name  = document.getElementById(`name_input_${userId}`).value.trim();
+    const email = document.getElementById(`email_input_${userId}`).value.trim();
+    const role  = document.getElementById(`role_input_${userId}`).value;
+
+    if (!name || !email) {
+        alert("Name and email are required.");
+        return;
+    }
+
+    const form = document.createElement("form");
+    form.method = "POST";
+    form.action = `/admin/users/edit/${userId}`;
+    [["name", name], ["email", email], ["role", role]].forEach(([k, v]) => {
+        const input = document.createElement("input");
+        input.name = k; input.value = v;
+        form.appendChild(input);
+    });
+    document.body.appendChild(form);
+    form.submit();
 }
 </script>
 {% endblock %}
