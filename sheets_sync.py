@@ -142,7 +142,7 @@ def build_sheet_rows(tab_name, db_entries):
         notes      = " | ".join(data["_notes"])
 
         try:
-            formatted_date = datetime.strptime(work_date, "%Y-%m-%d").strftime("%d/%m/%Y")
+           formatted_date = datetime.strptime(work_date, "%Y-%m-%d").strftime("%Y-%m-%d")
         except Exception:
             formatted_date = work_date
 
