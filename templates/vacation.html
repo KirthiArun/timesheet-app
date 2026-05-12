@@ -205,13 +205,16 @@ document.getElementById("vacationForm").addEventListener("submit", async functio
         document.querySelectorAll("input[name='vac_hours']").forEach(el => formData.append("vac_hours", el.value));
         formData.append("vac_notes", document.getElementById("vac_notes").value);
 
-        const res = await fetch("/vacation", { method: "POST", body: formData });
+        const res = await fetch("/vacation", {
+            method: "POST",
+            body: formData,
+            redirect: "manual"
+        });
 
-        if (res.redirected) {
-            window.location.href = res.url;
-        } else if (res.ok) {
+        if (res.status === 0 || res.ok || res.redirected) {
             window.location.href = "/vacation";
         } else {
+            console.error("Vacation submit error:", res.status);
             unlockForm();
             showError("Something went wrong. Please try again.");
         }
@@ -224,5 +227,45 @@ document.getElementById("vacationForm").addEventListener("submit", async functio
 // Start with one row defaulting to today
 const today = new Date().toISOString().split("T")[0];
 addRow(today);
+</script>
+{% if vacation_entries %}
+<div class="panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <h2 style="margin:0;border:none;padding:0;">My Vacations — {{ year }}</h2>
+        <span style="font-size:13px;color:#888;font-weight:600;">
+            Total: {{ vacation_entries | sum(attribute='hours') }} hrs
+            &nbsp;·&nbsp;
+            {{ vacation_entries | length }} day{% if vacation_entries | length != 1 %}s{% endif %}
+        </span>
+    </div>
+    <table>
+        <thead>
+            <tr><th>Date</th><th>Day</th><th>Hours</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+            {% for e in vacation_entries %}
+            <tr>
+                <td style="white-space:nowrap;" class="vac-date" data-date="{{ e.work_date }}">{{ e.work_date }}</td>
+                <td style="color:#888;font-size:13px;" class="vac-day"></td>
+                <td><strong>{{ e.hours }} hrs</strong></td>
+                <td style="font-size:13px;color:#555;">{{ e.comments or "—" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="panel" style="text-align:center;color:#aaa;padding:24px;">
+    <p>No vacation entries logged for {{ year }} yet.</p>
+</div>
+{% endif %}
+<script>
+// Format vacation date cells
+document.querySelectorAll(".vac-date").forEach(cell => {
+    const d = new Date(cell.dataset.date + "T00:00:00");
+    cell.textContent = d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    const dayCell = cell.nextElementSibling;
+    if (dayCell) dayCell.textContent = d.toLocaleDateString("en-US", { weekday: "long" });
+});
 </script>
 {% endblock %}

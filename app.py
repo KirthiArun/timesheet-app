@@ -387,6 +387,10 @@ def home():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    # Already logged in — send to dashboard
+    if "user_id" in session:
+        return redirect(url_for("dashboard"))
+
     if request.method == "POST":
         email    = request.form["email"].strip().lower()
         password = request.form["password"]
@@ -1106,126 +1110,145 @@ def vacation():
 
         total_hours = sum(e["hours"] for e in entries)
         name        = session.get("name")
+        user_id_bg  = session["user_id"]
 
-        # ── Auto-log timesheet entries ────────────────────────────────────────
-        conn = get_db()
-        now  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # ── All heavy work in background thread to prevent 502 ────────────────
+        entries_copy = list(entries)
+        notes_copy   = notes
 
-        # Get Vacation show and work code IDs
-        vac_show = db_execute(conn, """
-            SELECT show_id FROM shows
-            WHERE LOWER(show_name) = 'vacation' LIMIT 1
-        """).fetchone()
-
-        vac_code = db_execute(conn, """
-            SELECT work_code_id FROM work_codes
-            WHERE LOWER(code) = 'vacation' LIMIT 1
-        """).fetchone()
-
-        logged_entries = []
-        if vac_show and vac_code:
-            for e in entries:
-                # Skip if already logged for this date
-                existing = db_execute(conn, """
-                    SELECT entry_id FROM timesheet_entries
-                    WHERE user_id = ? AND work_date = ? AND show_id = ? AND work_code_id = ?
-                """, (session["user_id"], e["date"], vac_show["show_id"], vac_code["work_code_id"])).fetchone()
-
-                if not existing:
-                    db_execute(conn, """
-                        INSERT INTO timesheet_entries
-                        (user_id, show_id, work_code_id, work_date, hours, comments, created_at, updated_at)
-                        VALUES (?,?,?,?,?,?,?,?)
-                    """, (session["user_id"], vac_show["show_id"], vac_code["work_code_id"],
-                          e["date"], e["hours"], notes or "Vacation", now, now))
-                    logged_entries.append(e)
-
-            conn.commit()
-        conn.close()
-
-        # Sync to sheet in background
-        if logged_entries:
-            do_sheets_sync(session["user_id"])
-
-        # ── Send email ────────────────────────────────────────────────────────
-        rows_html = "".join(f"""
-            <tr>
-                <td style="padding:8px 14px;border-bottom:1px solid #eee;">
-                    {datetime.strptime(e['date'], '%Y-%m-%d').strftime('%A, %B %d, %Y')}
-                </td>
-                <td style="padding:8px 14px;border-bottom:1px solid #eee;font-weight:600;">
-                    {e['hours']} hrs
-                </td>
-            </tr>
-        """ for e in entries)
-
-        notes_section = f"<p style='margin-top:16px;'><strong>Notes:</strong> {notes}</p>" if notes else ""
-
-        html_body = f"""
-        <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
-            <div style="background:#fff8f0;border-left:4px solid #ff9800;padding:20px;border-radius:4px;">
-                <h2 style="margin-top:0;color:#e65100;">🌴 Vacation Request — {name}</h2>
-                <p style="color:#555;">
-                    <strong>{name}</strong> has submitted a vacation notification for
-                    <strong>{len(entries)} day{'s' if len(entries) != 1 else ''}</strong>
-                    totalling <strong>{total_hours} hrs</strong>.
-                </p>
-                <table style="width:100%;border-collapse:collapse;margin-top:16px;">
-                    <thead>
-                        <tr style="background:#ff9800;color:white;">
-                            <th style="padding:10px 14px;text-align:left;">Date</th>
-                            <th style="padding:10px 14px;text-align:left;">Hours</th>
-                        </tr>
-                    </thead>
-                    <tbody>{rows_html}</tbody>
-                    <tfoot>
-                        <tr style="background:#f5f5f5;font-weight:bold;">
-                            <td style="padding:10px 14px;">Total</td>
-                            <td style="padding:10px 14px;">{total_hours} hrs</td>
-                        </tr>
-                    </tfoot>
-                </table>
-                {notes_section}
-                <p style="color:#888;font-size:12px;margin-top:20px;">
-                    Hours have been automatically logged in the timesheet and synced to the master sheet.
-                </p>
-            </div>
-            <p style="color:#aaa;font-size:12px;margin-top:20px;text-align:center;">
-                Zydesoft Timesheet System
-            </p>
-        </div>"""
-
-        # Send email in background thread — prevents 502 timeout
-        smtp_host = os.environ.get("SMTP_HOST", "")
-        smtp_port = int(os.environ.get("SMTP_PORT", 587))
-        smtp_user = os.environ.get("SMTP_USER", "")
-        smtp_pass = os.environ.get("SMTP_PASS", "")
-
-        def _send_email():
+        def _process_vacation():
             try:
-                if not smtp_host or not smtp_user:
+                # DB inserts
+                conn = get_db()
+                now  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                vac_show = db_execute(conn, """
+                    SELECT show_id FROM shows
+                    WHERE LOWER(show_name) = 'vacation' LIMIT 1
+                """).fetchone()
+
+                vac_code = db_execute(conn, """
+                    SELECT work_code_id FROM work_codes
+                    WHERE LOWER(code) = 'vacation' LIMIT 1
+                """).fetchone()
+
+                logged = []
+                if vac_show and vac_code:
+                    for e in entries_copy:
+                        existing = db_execute(conn, """
+                            SELECT entry_id FROM timesheet_entries
+                            WHERE user_id = ? AND work_date = ? AND show_id = ? AND work_code_id = ?
+                        """, (user_id_bg, e["date"], vac_show["show_id"], vac_code["work_code_id"])).fetchone()
+                        if not existing:
+                            db_execute(conn, """
+                                INSERT INTO timesheet_entries
+                                (user_id, show_id, work_code_id, work_date, hours, comments, created_at, updated_at)
+                                VALUES (?,?,?,?,?,?,?,?)
+                            """, (user_id_bg, vac_show["show_id"], vac_code["work_code_id"],
+                                  e["date"], e["hours"], notes_copy or "Vacation", now, now))
+                            logged.append(e)
+                    conn.commit()
+                conn.close()
+                print(f"[Vacation] {len(logged)} entries logged for user {user_id_bg}")
+
+                # Sheets sync
+                if logged:
+                    do_sheets_sync(user_id_bg)
+
+                # Email
+                rows_html = "".join(f"""
+                    <tr>
+                        <td style="padding:8px 14px;border-bottom:1px solid #eee;">
+                            {datetime.strptime(e["date"], "%Y-%m-%d").strftime("%A, %B %d, %Y")}
+                        </td>
+                        <td style="padding:8px 14px;border-bottom:1px solid #eee;font-weight:600;">
+                            {e["hours"]} hrs
+                        </td>
+                    </tr>
+                """ for e in entries_copy)
+
+                notes_section = f"<p style='margin-top:16px;'><strong>Notes:</strong> {notes_copy}</p>" if notes_copy else ""
+
+                html_body = f"""
+                <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+                    <div style="background:#fff8f0;border-left:4px solid #ff9800;padding:20px;border-radius:4px;">
+                        <h2 style="margin-top:0;color:#e65100;">🌴 Vacation Request — {name}</h2>
+                        <p style="color:#555;">
+                            <strong>{name}</strong> has submitted a vacation notification for
+                            <strong>{len(entries_copy)} day{"s" if len(entries_copy) != 1 else ""}</strong>
+                            totalling <strong>{total_hours} hrs</strong>.
+                        </p>
+                        <table style="width:100%;border-collapse:collapse;margin-top:16px;">
+                            <thead>
+                                <tr style="background:#ff9800;color:white;">
+                                    <th style="padding:10px 14px;text-align:left;">Date</th>
+                                    <th style="padding:10px 14px;text-align:left;">Hours</th>
+                                </tr>
+                            </thead>
+                            <tbody>{rows_html}</tbody>
+                            <tfoot>
+                                <tr style="background:#f5f5f5;font-weight:bold;">
+                                    <td style="padding:10px 14px;">Total</td>
+                                    <td style="padding:10px 14px;">{total_hours} hrs</td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                        {notes_section}
+                        <p style="color:#888;font-size:12px;margin-top:20px;">
+                            Hours have been automatically logged in the timesheet and synced to the master sheet.
+                        </p>
+                    </div>
+                    <p style="color:#aaa;font-size:12px;margin-top:20px;text-align:center;">
+                        Zydesoft Timesheet System
+                    </p>
+                </div>"""
+
+                smtp_host = os.environ.get("SMTP_HOST", "")
+                smtp_port = int(os.environ.get("SMTP_PORT", 587))
+                smtp_user = os.environ.get("SMTP_USER", "")
+                smtp_pass = os.environ.get("SMTP_PASS", "")
+
+                if smtp_host and smtp_user:
+                    try:
+                        msg = MIMEMultipart("alternative")
+                        msg["Subject"] = f"🌴 Vacation Notice — {name} ({len(entries_copy)} day{'s' if len(entries_copy) != 1 else ''}, {total_hours} hrs)"
+                        msg["From"]    = smtp_user
+                        msg["To"]      = ", ".join(VACATION_NOTIFY_EMAILS)
+                        msg["Reply-To"] = smtp_user
+                        msg.attach(MIMEText(html_body, "html"))
+                        with smtplib.SMTP(smtp_host, smtp_port) as server:
+                            server.starttls()
+                            server.login(smtp_user, smtp_pass)
+                            server.sendmail(smtp_user, VACATION_NOTIFY_EMAILS, msg.as_string())
+                        print(f"[Vacation] Email sent for {name}")
+                    except Exception as email_err:
+                        print(f"[Vacation] Email failed: {email_err}")
+                else:
                     print("[Vacation] SMTP not configured — skipping email")
-                    return
-                msg = MIMEMultipart("alternative")
-                msg["Subject"] = f"🌴 Vacation Notice — {name} ({len(entries)} day{'s' if len(entries) != 1 else ''}, {total_hours} hrs)"
-                msg["From"]    = smtp_user
-                msg["To"]      = ", ".join(VACATION_NOTIFY_EMAILS)
-                msg["Reply-To"] = smtp_user
-                msg.attach(MIMEText(html_body, "html"))
-                with smtplib.SMTP(smtp_host, smtp_port) as server:
-                    server.starttls()
-                    server.login(smtp_user, smtp_pass)
-                    server.sendmail(smtp_user, VACATION_NOTIFY_EMAILS, msg.as_string())
-                print(f"[Vacation] Email sent for {name}")
-            except Exception as e:
-                print(f"[Vacation] Email failed: {e}")
 
-        threading.Thread(target=_send_email, daemon=True).start()
+            except Exception as ex:
+                print(f"[Vacation] Background processing error: {ex}")
 
-        flash(f"✅ Vacation request submitted — {len(entries)} day(s), {total_hours} hrs logged and team notified.", "success")
+        threading.Thread(target=_process_vacation, daemon=True).start()
+
+        flash(f"✅ Vacation request submitted — {len(entries)} day(s), {total_hours} hrs. Logging and notification in progress.", "success")
         return redirect(url_for("vacation"))
 
-    return render_template("vacation.html")
+    # Fetch this year's vacation entries for display
+    conn  = get_db()
+    year  = date.today().year
+    vacation_entries = db_execute(conn, """
+        SELECT t.work_date, t.hours, t.comments
+        FROM timesheet_entries t
+        JOIN work_codes w ON t.work_code_id = w.work_code_id
+        WHERE t.user_id = ?
+          AND LOWER(w.code) = 'vacation'
+          AND t.work_date BETWEEN ? AND ?
+        ORDER BY t.work_date ASC
+    """, (session["user_id"], f"{year}-01-01", f"{year}-12-31")).fetchall()
+    conn.close()
+
+    return render_template("vacation.html", vacation_entries=vacation_entries, year=year)
 
 
 # ── Startup ───────────────────────────────────────────────────────────────────
@@ -1233,6 +1256,10 @@ def vacation():
 with app.app_context():
     init_db()
 
+@app.route("/health")
+def health():
+    return {"status": "ok"}, 200
+    
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=False, host="0.0.0.0", port=port)
