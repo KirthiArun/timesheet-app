@@ -63,6 +63,8 @@
                     </form>
                 </td>
                 <td>
+                    {# ADD before it #}
+                    <a class="action-link" href="{{ url_for('admin_sync_user', user_id=u.user_id) }}">↻ Sync</a>
                     {% if u.user_id != session.get('user_id') %}
                     <a class="danger-link" href="{{ url_for('admin_delete_user', user_id=u.user_id) }}"
                        onclick="return confirm('Delete {{ u.name }}? All their entries will remain but they cannot log in.')">Delete</a>

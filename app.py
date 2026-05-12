@@ -1250,7 +1250,20 @@ def vacation():
 
     return render_template("vacation.html", vacation_entries=vacation_entries, year=year)
 
-
+@app.route("/admin/sync-user/<int:user_id>")
+@login_required
+@admin_required
+def admin_sync_user(user_id):
+    conn = get_db()
+    user = db_execute(conn, "SELECT name FROM users WHERE user_id = ?", (user_id,)).fetchone()
+    conn.close()
+    if not user:
+        flash("User not found.", "error")
+        return redirect(url_for("admin_users"))
+    do_sheets_sync(user_id)
+    flash(f"Re-sync triggered for {user['name']}.", "success")
+    return redirect(url_for("admin_users"))
+    
 # ── Startup ───────────────────────────────────────────────────────────────────
 
 with app.app_context():
@@ -1259,7 +1272,7 @@ with app.app_context():
 @app.route("/health")
 def health():
     return {"status": "ok"}, 200
-    
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=False, host="0.0.0.0", port=port)

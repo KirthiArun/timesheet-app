@@ -23,6 +23,7 @@
     <a href="{{ url_for('reports') }}" class="{% if request.endpoint == 'reports' %}active{% endif %}">Reports</a>
     <a href="{{ url_for('admin_users') }}" class="{% if request.endpoint == 'admin_users' %}active{% endif %}">Manage Users</a>
     <a href="{{ url_for('admin_sync_shows') }}" class="sync-link">↻ Sync Shows</a>
+    <a href="{{ url_for('admin_sync_all_users') }}" class="sync-link">↻ Sync All Users</a>
     {% endif %}
     <a href="{{ url_for('logout') }}" class="logout-link">Logout</a>
 </div>
