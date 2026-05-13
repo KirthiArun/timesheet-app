@@ -369,19 +369,27 @@ def get_show_work_codes(conn, show_id=None):
 
 def do_sheets_sync(user_id):
     if not SHEETS_SYNC_ENABLED:
+        print(f"[SheetsSync] Skipping — sync not enabled")
         return
+
+    print(f"[SheetsSync] Starting sync for user {user_id}")
 
     def _sync():
         try:
+            print(f"[SheetsSync] Thread running for user {user_id}")
             ok, err = sync_user_to_sheet(user_id)
             if not ok:
                 print(f"[SheetsSync] Sync failed for user {user_id}: {err}")
             else:
                 print(f"[SheetsSync] Sync complete for user {user_id}")
         except Exception as e:
+            import traceback
             print(f"[SheetsSync] Sync error for user {user_id}: {e}")
+            print(traceback.format_exc())
 
-    threading.Thread(target=_sync, daemon=True).start()
+    t = threading.Thread(target=_sync, daemon=True)
+    t.start()
+    print(f"[SheetsSync] Thread started: {t.name}")
 
 def generate_password(length=10):
     alphabet = string.ascii_letters + string.digits
