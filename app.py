@@ -21,7 +21,7 @@ APP_WORK_CODES = [
     'OTTRAIN', 'PRWS', 'QATEST', 'SHAWS', 'Vacation'
 ]
 
-VACATION_NOTIFY_EMAILS = ["zydetools@gmail.com"]
+VACATION_NOTIFY_EMAILS = ["kirthika@zydesoft.com", "sivanraj@zydesoft.com"]
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "be-kind-you-never-know-what-the-other-person-is-going-through")
@@ -1290,7 +1290,7 @@ def vacation():
                         import resend
                         resend.api_key = resend_key
                         resend.Emails.send({
-                            "from":    "Zydesoft Timesheet <zydetools@gmail.com>",
+                            "from": "Zydesoft Timesheet <noreply@zydesoft.com>",
                             "to":      VACATION_NOTIFY_EMAILS,
                             "subject": f"🌴 Vacation Notice — {name} ({len(entries_copy)} day{'s' if len(entries_copy) != 1 else ''}, {total_hours} hrs)",
                             "html":    html_body
