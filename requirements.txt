@@ -9,4 +9,3 @@ python-dotenv==1.0.1
 gunicorn==21.2.0
 psycopg[binary]==3.3.4
 resend==2.0.0
-openpyxl==3.1.2

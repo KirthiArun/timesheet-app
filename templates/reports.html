@@ -20,10 +20,7 @@
        href="{{ url_for('export_report', report_type=report_type, from_date=from_date, to_date=to_date, user_id=request.args.get('user_id',''), show_id=request.args.get('show_id',''), work_code_id=request.args.get('work_code_id','')) }}">
        ⬇ Export CSV
     </a>
-    <a class="quick-btn invoice-btn"
-       href="{{ url_for('export_invoice', report_type=report_type, from_date=from_date, to_date=to_date) }}">
-       📄 Invoice Report
-    </a>
+
     {% endif %}
 </div>
 
@@ -221,8 +218,7 @@
 .quick-btn.active { background:#4a86e8; color:#fff; border-color:#4a86e8; }
 .quick-btn.export-btn { background:#e8f5e9; color:#2e7d32; border-color:#a5d6a7; margin-left:auto; }
 .quick-btn.export-btn:hover { background:#c8e6c9; }
-.quick-btn.invoice-btn { background:#fff8e1; color:#f57f17; border-color:#ffe082; }
-.quick-btn.invoice-btn:hover { background:#fff3cd; }
+
 
 .period-label {
     font-size:13px;
