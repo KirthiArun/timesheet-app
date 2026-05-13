@@ -136,7 +136,7 @@ def build_sheet_rows(tab_name, db_entries):
 
     sheet_rows = [HEADER_ROW]
 
-   for (work_date, show_label), data in sorted(grouped.items()):
+    for (work_date, show_label), data in sorted(grouped.items()):
         hours_cols = [data.get(code, 0) for code in WORK_CODE_COLUMNS]
         # Exclude Vacation hours from billable total
         total = sum(
@@ -146,7 +146,7 @@ def build_sheet_rows(tab_name, db_entries):
         notes = " | ".join(data["_notes"])
 
         try:
-           formatted_date = datetime.strptime(work_date, "%Y-%m-%d").strftime("%Y-%m-%d")
+            formatted_date = datetime.strptime(work_date, "%Y-%m-%d").strftime("%Y-%m-%d")
         except Exception:
             formatted_date = work_date
 
