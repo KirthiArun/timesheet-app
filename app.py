@@ -364,19 +364,12 @@ def get_show_work_codes(conn, show_id=None):
     ).fetchall()
 
 
-_sync_timers = {}
-
 def do_sheets_sync(user_id):
     if not SHEETS_SYNC_ENABLED:
         return
 
-    # Cancel any pending sync for this user — debounce rapid saves
-    if user_id in _sync_timers:
-        _sync_timers[user_id].cancel()
-
     def _sync():
         try:
-            _sync_timers.pop(user_id, None)
             ok, err = sync_user_to_sheet(user_id)
             if not ok:
                 print(f"[SheetsSync] Sync failed for user {user_id}: {err}")
@@ -385,12 +378,7 @@ def do_sheets_sync(user_id):
         except Exception as e:
             print(f"[SheetsSync] Sync error for user {user_id}: {e}")
 
-    # Wait 3 seconds after last save before syncing
-    # Batches rapid consecutive saves into one sync call
-    timer = threading.Timer(3.0, _sync)
-    _sync_timers[user_id] = timer
-    timer.start()
-
+    threading.Thread(target=_sync, daemon=True).start()
 
 def generate_password(length=10):
     alphabet = string.ascii_letters + string.digits
