@@ -303,6 +303,9 @@ def get_monday(d=None):
 
 def is_locked(work_date_text):
     work_date = datetime.strptime(work_date_text, "%Y-%m-%d").date()
+    # During May 2026 rollout — allow editing any date in May 2026
+    if work_date.year == 2026 and work_date.month == 5:
+        return False
     return work_date < get_monday(date.today())
 
 
