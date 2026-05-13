@@ -111,7 +111,8 @@
                 </td>
                 <td style="white-space:nowrap;">
                     {% if not is_locked(e.work_date) %}
-                    <a class="action-link" href="{{ url_for('edit_entry', entry_id=e.entry_id) }}">Edit</a>
+                    <a class="action-link" href="#"
+                       onclick="goToEdit({{ e.entry_id }}); return false;">Edit</a>
                     <a class="danger-link" href="#"
                        onclick="confirmDelete({{ e.entry_id }}, this); return false;">Delete</a>
                     {% else %}—{% endif %}
@@ -306,10 +307,53 @@ document.addEventListener("click", function (e) {
 // ── Delete with progress ──────────────────────────────────────────────────────
 function confirmDelete(entryId, link) {
     if (!confirm("Delete this entry?")) return;
+
+    // Lock ALL actions on the page immediately
+    lockAllActions();
+
     const overlay = document.getElementById("deleteOverlay");
     overlay.style.display = "flex";
-    document.querySelectorAll(".danger-link").forEach(el => el.style.pointerEvents = "none");
-    window.location.href = `/delete-entry/${entryId}`;
+
+    // Use fetch instead of navigation to detect completion reliably
+    fetch(`/delete-entry/${entryId}`, { redirect: "manual" })
+        .then(res => {
+            if (res.status === 0 || res.ok || res.redirected) {
+                window.location.href = "/timesheet";
+            } else {
+                overlay.style.display = "none";
+                unlockAllActions();
+                alert("Could not delete entry. Please try again.");
+            }
+        })
+        .catch(() => {
+            overlay.style.display = "none";
+            unlockAllActions();
+            alert("Network error — please try again.");
+        });
+}
+
+function goToEdit(entryId) {
+    lockAllActions();
+    // Show a subtle loading state on the edit link
+    window.location.href = `/edit-entry/${entryId}`;
+}
+
+function lockAllActions() {
+    // Disable all edit and delete links in the entries table
+    document.querySelectorAll(".action-link, .danger-link").forEach(el => {
+        el.style.pointerEvents = "none";
+        el.style.opacity = "0.4";
+    });
+    // Also lock the save form
+    lockForm();
+}
+
+function unlockAllActions() {
+    document.querySelectorAll(".action-link, .danger-link").forEach(el => {
+        el.style.pointerEvents = "";
+        el.style.opacity = "";
+    });
+    unlockForm();
 }
 
 // ── Form Submit ───────────────────────────────────────────────────────────────
@@ -380,21 +424,24 @@ function lockForm() {
     const saveBtn   = document.getElementById("saveBtn");
     const indicator = document.getElementById("savingIndicator");
 
-    // Disable all inputs
     document.getElementById("work_date").disabled    = true;
     document.getElementById("work_code_id").disabled = true;
     document.getElementById("hours").disabled         = true;
     document.getElementById("comments").disabled      = true;
 
-    // Disable show picker trigger
     document.getElementById("showTrigger").style.pointerEvents = "none";
     document.getElementById("showTrigger").style.opacity       = "0.5";
     pickerWrap.classList.remove("open");
 
-    // Disable save button + show spinner
-    saveBtn.disabled         = true;
-    saveBtn.style.opacity    = "0.5";
-    indicator.style.display  = "flex";
+    saveBtn.disabled        = true;
+    saveBtn.style.opacity   = "0.5";
+    indicator.style.display = "flex";
+
+    // Also lock table actions so user can't edit/delete while saving
+    document.querySelectorAll(".action-link, .danger-link").forEach(el => {
+        el.style.pointerEvents = "none";
+        el.style.opacity       = "0.4";
+    });
 }
 
 function unlockForm() {
@@ -413,6 +460,11 @@ function unlockForm() {
     saveBtn.disabled        = false;
     saveBtn.style.opacity   = "1";
     indicator.style.display = "none";
+
+    document.querySelectorAll(".action-link, .danger-link").forEach(el => {
+        el.style.pointerEvents = "";
+        el.style.opacity       = "";
+    });
 }
 
 function showError(msg) {

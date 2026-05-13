@@ -3,21 +3,23 @@
 <head>
     <meta charset="UTF-8">
     <title>{{ title or "Timesheet — Zydesoft" }}</title>
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
 </head>
 <body>
-{% if session.get("user_id") and request.endpoint != 'login' %}
+{% if session.get("user_id") %}
 <div class="sidebar">
     <div class="brand">
-        <img src="{{ url_for('static', filename='z-circle.png') }}" class="logo" onerror="this.style.display='none'">
-        <span class="brand-name">Hours Log</span>
+        <img src="{{ url_for('static', filename='logo.png') }}" class="logo" onerror="this.style.display='none'">
+        <span class="brand-name">TimeFlow</span>
     </div>
     <a href="{{ url_for('dashboard') }}" class="{% if request.endpoint == 'dashboard' %}active{% endif %}">Dashboard</a>
     {% if session.get("role") != "admin" %}
     <a href="{{ url_for('timesheet') }}" class="{% if request.endpoint == 'timesheet' %}active{% endif %}">My Timesheet</a>
     <a href="{{ url_for('weekly') }}" class="{% if request.endpoint == 'weekly' %}active{% endif %}">Weekly View</a>
-    <a href="{{ url_for('vacation') }}" class="{% if request.endpoint == 'vacation' %}active{% endif %}">🌴 Inform Vacation</a>
     {% endif %}
     {% if session.get("role") == "admin" %}
     <a href="{{ url_for('reports') }}" class="{% if request.endpoint == 'reports' %}active{% endif %}">Reports</a>
@@ -29,7 +31,6 @@
 {% endif %}
 
 <main class="{% if session.get('user_id') %}content{% else %}login-content{% endif %}">
-    {% if request.endpoint != 'login' %}
     {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
             {% for category, message in messages %}
@@ -37,7 +38,6 @@
             {% endfor %}
         {% endif %}
     {% endwith %}
-    {% endif %}
     {% block content %}{% endblock %}
 </main>
 </body>

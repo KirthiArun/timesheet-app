@@ -94,6 +94,17 @@ def init_db():
             role          TEXT NOT NULL CHECK(role IN ('admin', 'user')),
             auth_provider TEXT NOT NULL DEFAULT 'local'
         )""")
+
+        # Add new user columns if missing (safe for existing DBs)
+        for col, defn in [
+            ("team",          "TEXT DEFAULT ''"),
+            ("description",   "TEXT DEFAULT ''"),
+            ("rate_per_hour", "REAL DEFAULT 0"),
+            ("hike",          "REAL DEFAULT 0"),
+        ]:
+            if not column_exists(conn, "users", col):
+                cur.execute(f"ALTER TABLE users ADD COLUMN {col} {defn}")
+
         cur.execute("""
         CREATE TABLE IF NOT EXISTS shows (
             show_id     SERIAL PRIMARY KEY,
@@ -148,6 +159,14 @@ def init_db():
         )""")
         if not column_exists(conn, "users", "auth_provider"):
             cur.execute("ALTER TABLE users ADD COLUMN auth_provider TEXT NOT NULL DEFAULT 'local'")
+        if not column_exists(conn, "users", "team"):
+            cur.execute("ALTER TABLE users ADD COLUMN team TEXT DEFAULT ''")
+        if not column_exists(conn, "users", "description"):
+            cur.execute("ALTER TABLE users ADD COLUMN description TEXT DEFAULT ''")
+        if not column_exists(conn, "users", "rate_per_hour"):
+            cur.execute("ALTER TABLE users ADD COLUMN rate_per_hour REAL DEFAULT 0")
+        if not column_exists(conn, "users", "hike"):
+            cur.execute("ALTER TABLE users ADD COLUMN hike REAL DEFAULT 0")
         cur.execute("""
         CREATE TABLE IF NOT EXISTS shows (
             show_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -532,8 +551,10 @@ def dashboard():
         LEFT JOIN shows s  ON t.show_id      = s.show_id
         JOIN users u       ON t.user_id      = u.user_id
         WHERE (? = 'admin' OR t.user_id = ?)
+          AND t.work_date BETWEEN ? AND ?
         ORDER BY t.work_date DESC, t.entry_id DESC LIMIT 40
-    """, (session["role"], session["user_id"])).fetchall()
+    """, (session["role"], session["user_id"],
+          current_monday.isoformat(), current_friday.isoformat())).fetchall()
 
     grouped = []
     current_group = None
@@ -564,7 +585,8 @@ def dashboard():
 
     conn.close()
 
-    return render_template("dashboard.html",
+    from flask import make_response
+    resp = make_response(render_template("dashboard.html",
         total_hours=total_hours,
         pending_summary=pending_summary,
         admin_missing_users=admin_missing_users,
@@ -576,7 +598,11 @@ def dashboard():
         week_start=current_monday.isoformat(),
         week_end=current_friday.isoformat(),
         sheets_sync_enabled=SHEETS_SYNC_ENABLED
-    )
+    ))
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"]        = "no-cache"
+    resp.headers["Expires"]       = "0"
+    return resp
 
 
 # ── Routes: Timesheet ─────────────────────────────────────────────────────────
@@ -1005,7 +1031,7 @@ def admin_sync_shows():
 @admin_required
 def admin_users():
     conn  = get_db()
-    users = db_execute(conn, "SELECT user_id, name, email, role FROM users ORDER BY name").fetchall()
+    users = db_execute(conn, "SELECT user_id, name, email, role, team, description, rate_per_hour, hike FROM users ORDER BY team, name").fetchall()
     conn.close()
     return render_template("admin_users.html", users=users)
 
@@ -1073,6 +1099,266 @@ def admin_reset_password(user_id):
 @admin_required
 def admin_generate_password():
     return {"password": generate_password()}
+
+
+# ── Admin: Edit User ─────────────────────────────────────────────────────────
+
+@app.route("/admin/users/edit/<int:user_id>", methods=["POST"])
+@login_required
+@admin_required
+def admin_edit_user(user_id):
+    name          = request.form.get("name", "").strip()
+    email         = request.form.get("email", "").strip().lower()
+    role          = request.form.get("role", "user")
+    team          = request.form.get("team", "").strip()
+    description   = request.form.get("description", "").strip()
+    rate_per_hour = request.form.get("rate_per_hour", "0").strip()
+    hike          = request.form.get("hike", "0").strip()
+
+    if not name or not email:
+        flash("Name and email are required.", "error")
+        return redirect(url_for("admin_users"))
+
+    try:
+        rate_per_hour = float(rate_per_hour) if rate_per_hour else 0
+        hike          = float(hike) if hike else 0
+    except ValueError:
+        flash("Rate and hike must be numbers.", "error")
+        return redirect(url_for("admin_users"))
+
+    conn = get_db()
+    try:
+        db_execute(conn, """
+            UPDATE users SET name=?, email=?, role=?, team=?, description=?, rate_per_hour=?, hike=?
+            WHERE user_id=?
+        """, (name, email, role, team, description, rate_per_hour, hike, user_id))
+        conn.commit()
+        flash(f"User updated successfully.", "success")
+    except Exception:
+        conn.rollback()
+        flash("Email already in use by another user.", "error")
+    conn.close()
+    return redirect(url_for("admin_users"))
+
+
+@app.route("/admin/users/sync/<int:user_id>")
+@login_required
+@admin_required
+def admin_sync_user(user_id):
+    conn = get_db()
+    user = db_execute(conn, "SELECT name FROM users WHERE user_id=?", (user_id,)).fetchone()
+    conn.close()
+    if not user:
+        flash("User not found.", "error")
+        return redirect(url_for("admin_users"))
+    do_sheets_sync(user_id)
+    flash(f"Re-sync triggered for {user['name']}.", "success")
+    return redirect(url_for("admin_users"))
+
+
+# ── Invoice Report ────────────────────────────────────────────────────────────
+
+@app.route("/reports/invoice")
+@login_required
+@admin_required
+def export_invoice():
+    from_date   = request.args.get("from_date", "")
+    to_date     = request.args.get("to_date", "")
+    report_type = request.args.get("report_type", "monthly")
+
+    today = date.today()
+    if report_type == "weekly":
+        monday    = get_monday(today)
+        from_date = monday.isoformat()
+        to_date   = (monday + timedelta(days=4)).isoformat()
+    elif not from_date or not to_date:
+        from_date = today.replace(day=1).isoformat()
+        to_date   = today.isoformat()
+
+    conn  = get_db()
+    users = db_execute(conn, """
+        SELECT user_id, name, email, team, description, rate_per_hour, hike
+        FROM users WHERE role = 'user' ORDER BY team, name
+    """).fetchall()
+
+    # Get total hours per user in date range
+    hours_map = {}
+    for u in users:
+        row = db_execute(conn, """
+            SELECT COALESCE(SUM(hours), 0) AS total_hours
+            FROM timesheet_entries
+            WHERE user_id = ? AND work_date BETWEEN ? AND ?
+        """, (u["user_id"], from_date, to_date)).fetchone()
+        hours_map[u["user_id"]] = row["total_hours"] if row else 0
+
+    conn.close()
+
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+        import io
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Monthly Rate Calculations"
+
+        # Load template to copy columns A-G from first data row
+        template_path = "/mnt/user-data/uploads/Monthly_Rate_Calculation-Mar_2026.xlsx"
+        try:
+            tmpl_wb = openpyxl.load_workbook(template_path, data_only=True)
+            tmpl_ws = tmpl_wb.active
+            # Read template headers and first row for reference values
+            tmpl_headers = [cell.value for cell in tmpl_ws[1]]
+        except Exception:
+            tmpl_ws = None
+
+        # Styles
+        header_font    = Font(bold=True, name="Arial", size=10)
+        header_fill    = PatternFill("solid", start_color="1F3864", end_color="1F3864")
+        header_color   = Font(bold=True, name="Arial", size=10, color="FFFFFF")
+        data_font      = Font(name="Arial", size=10)
+        total_font     = Font(bold=True, name="Arial", size=10)
+        total_fill     = PatternFill("solid", start_color="D9E1F2", end_color="D9E1F2")
+        thin           = Side(style="thin", color="CCCCCC")
+        border         = Border(left=thin, right=thin, top=thin, bottom=thin)
+        center_align   = Alignment(horizontal="center", vertical="center")
+        left_align     = Alignment(horizontal="left", vertical="center")
+
+        # Headers matching template
+        headers = ["SNO", "FIRST NAME", "LAST NAME", "DESCRIPTION",
+                   "RATE PER HOUR", "HIKE APPROVED (in $)", "FINAL RATE",
+                   "HOURS", "RATE PER MONTH (IN USD)", "DETAILS"]
+
+        # Column widths
+        col_widths = [6, 18, 18, 30, 14, 20, 12, 10, 22, 20]
+
+        # Write title row
+        ws.merge_cells("A1:J1")
+        ws["A1"] = f"Monthly Rate Calculations — {from_date} to {to_date}"
+        ws["A1"].font  = Font(bold=True, name="Arial", size=12, color="1F3864")
+        ws["A1"].alignment = center_align
+        ws.row_dimensions[1].height = 22
+
+        # Write headers on row 2
+        for col_idx, (h, w) in enumerate(zip(headers, col_widths), 1):
+            cell = ws.cell(row=2, column=col_idx, value=h)
+            cell.font      = header_color
+            cell.fill      = header_fill
+            cell.alignment = center_align
+            cell.border    = border
+            ws.column_dimensions[get_column_letter(col_idx)].width = w
+        ws.row_dimensions[2].height = 18
+
+        # Group users by team
+        sno      = 1
+        data_row = 3
+        teams    = {}
+        for u in users:
+            t = u["team"] or "Unassigned"
+            teams.setdefault(t, []).append(u)
+
+        team_row_ranges = {}  # track rows per team for subtotals
+
+        for team_name, team_users in teams.items():
+            # Team header row
+            ws.merge_cells(f"A{data_row}:J{data_row}")
+            cell = ws.cell(row=data_row, column=1, value=f"  {team_name}")
+            cell.font      = Font(bold=True, name="Arial", size=10, color="1F3864")
+            cell.fill      = PatternFill("solid", start_color="D6E4F7", end_color="D6E4F7")
+            cell.alignment = left_align
+            for col in range(1, 11):
+                ws.cell(row=data_row, column=col).border = border
+            ws.row_dimensions[data_row].height = 16
+            data_row += 1
+
+            team_start = data_row
+
+            for u in team_users:
+                # Split name
+                name_parts  = u["name"].strip().split(" ", 1)
+                first_name  = name_parts[0]
+                last_name   = name_parts[1] if len(name_parts) > 1 else ""
+                rate        = u["rate_per_hour"] or 0
+                hike        = u["hike"] or 0
+                final_rate  = rate + hike
+                hours       = hours_map.get(u["user_id"], 0)
+                rate_month  = final_rate * hours
+
+                row_data = [
+                    sno, first_name, last_name,
+                    u["description"] or "",
+                    rate, hike, final_rate,
+                    hours, rate_month,
+                    "Fixed monthly Salary"
+                ]
+
+                for col_idx, val in enumerate(row_data, 1):
+                    cell = ws.cell(row=data_row, column=col_idx, value=val)
+                    cell.font      = data_font
+                    cell.border    = border
+                    cell.alignment = center_align if col_idx != 4 else left_align
+                    # Number formats
+                    if col_idx in [5, 6, 7]:
+                        cell.number_format = "#,##0.00"
+                    elif col_idx in [8]:
+                        cell.number_format = "#,##0"
+                    elif col_idx == 9:
+                        cell.number_format = "#,##0"
+
+                ws.row_dimensions[data_row].height = 15
+                sno      += 1
+                data_row += 1
+
+            team_row_ranges[team_name] = (team_start, data_row - 1)
+
+            # Team subtotal
+            if data_row - 1 >= team_start:
+                subtotal_row = data_row
+                ws.cell(row=subtotal_row, column=7, value="Subtotal").font   = total_font
+                ws.cell(row=subtotal_row, column=7).alignment                = center_align
+                ws.cell(row=subtotal_row, column=8, value=f"=SUM(H{team_start}:H{data_row-1})").font = total_font
+                ws.cell(row=subtotal_row, column=8).number_format             = "#,##0"
+                ws.cell(row=subtotal_row, column=9, value=f"=SUM(I{team_start}:I{data_row-1})").font = total_font
+                ws.cell(row=subtotal_row, column=9).number_format             = "#,##0"
+                for col in range(1, 11):
+                    ws.cell(row=subtotal_row, column=col).fill   = total_fill
+                    ws.cell(row=subtotal_row, column=col).border = border
+                ws.row_dimensions[subtotal_row].height = 15
+                data_row += 2  # blank line between teams
+
+        # Grand total
+        total_row = data_row
+        ws.cell(row=total_row, column=7, value="TOTAL").font      = Font(bold=True, name="Arial", size=11)
+        ws.cell(row=total_row, column=7).alignment                 = center_align
+        ws.cell(row=total_row, column=8, value=f"=SUM(H3:H{total_row-1})").font = Font(bold=True, name="Arial", size=11)
+        ws.cell(row=total_row, column=8).number_format              = "#,##0"
+        ws.cell(row=total_row, column=9, value=f"=SUM(I3:I{total_row-1})").font = Font(bold=True, name="Arial", size=11)
+        ws.cell(row=total_row, column=9).number_format              = "#,##0"
+        grand_fill = PatternFill("solid", start_color="1F3864", end_color="1F3864")
+        for col in range(1, 11):
+            ws.cell(row=total_row, column=col).fill   = grand_fill
+            ws.cell(row=total_row, column=col).border = border
+            if ws.cell(row=total_row, column=col).font:
+                ws.cell(row=total_row, column=col).font = Font(
+                    bold=True, name="Arial", size=11, color="FFFFFF")
+        ws.row_dimensions[total_row].height = 18
+
+        # Freeze panes below header
+        ws.freeze_panes = "A3"
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+
+        filename = f"Invoice_Report_{from_date}_to_{to_date}.xlsx"
+        from flask import send_file
+        return send_file(buf, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                         as_attachment=True, download_name=filename)
+
+    except Exception as e:
+        flash(f"Failed to generate invoice report: {str(e)}", "error")
+        return redirect(url_for("reports"))
 
 
 # ── Vacation Notification ─────────────────────────────────────────────────────
@@ -1208,23 +1494,23 @@ def vacation():
                 smtp_user = os.environ.get("SMTP_USER", "")
                 smtp_pass = os.environ.get("SMTP_PASS", "")
 
-                if smtp_host and smtp_user:
+               resend_key = os.environ.get("RESEND_API_KEY", "")
+                if resend_key:
                     try:
-                        msg = MIMEMultipart("alternative")
-                        msg["Subject"] = f"🌴 Vacation Notice — {name} ({len(entries_copy)} day{'s' if len(entries_copy) != 1 else ''}, {total_hours} hrs)"
-                        msg["From"]    = smtp_user
-                        msg["To"]      = ", ".join(VACATION_NOTIFY_EMAILS)
-                        msg["Reply-To"] = smtp_user
-                        msg.attach(MIMEText(html_body, "html"))
-                        with smtplib.SMTP(smtp_host, smtp_port) as server:
-                            server.starttls()
-                            server.login(smtp_user, smtp_pass)
-                            server.sendmail(smtp_user, VACATION_NOTIFY_EMAILS, msg.as_string())
+                        import resend
+                        resend.api_key = resend_key
+                        resend.Emails.send({
+                            "from":    "Zydesoft Timesheet <onboarding@resend.dev>",
+                            "to":      VACATION_NOTIFY_EMAILS,
+                            "subject": f"🌴 Vacation Notice — {name} ({len(entries_copy)} day{'s' if len(entries_copy) != 1 else ''}, {total_hours} hrs)",
+                            "html":    html_body
+                        })
                         print(f"[Vacation] Email sent for {name}")
                     except Exception as email_err:
                         print(f"[Vacation] Email failed: {email_err}")
                 else:
-                    print("[Vacation] SMTP not configured — skipping email")
+                    print("[Vacation] RESEND_API_KEY not set — skipping email")
+
 
             except Exception as ex:
                 print(f"[Vacation] Background processing error: {ex}")
@@ -1250,55 +1536,12 @@ def vacation():
 
     return render_template("vacation.html", vacation_entries=vacation_entries, year=year)
 
-@app.route("/admin/sync-user/<int:user_id>")
-@login_required
-@admin_required
-def admin_sync_user(user_id):
-    conn = get_db()
-    user = db_execute(conn, "SELECT name FROM users WHERE user_id = ?", (user_id,)).fetchone()
-    conn.close()
-    if not user:
-        flash("User not found.", "error")
-        return redirect(url_for("admin_users"))
-    do_sheets_sync(user_id)
-    flash(f"Re-sync triggered for {user['name']}.", "success")
-    return redirect(url_for("admin_users"))
-    
+
 # ── Startup ───────────────────────────────────────────────────────────────────
 
 with app.app_context():
     init_db()
 
-@app.route("/health")
-def health():
-    return {"status": "ok"}, 200
-
-@app.route("/admin/users/edit/<int:user_id>", methods=["POST"])
-@login_required
-@admin_required
-def admin_edit_user(user_id):
-    name  = request.form.get("name", "").strip()
-    email = request.form.get("email", "").strip().lower()
-    role  = request.form.get("role", "user")
-
-    if not name or not email:
-        flash("Name and email are required.", "error")
-        return redirect(url_for("admin_users"))
-
-    conn = get_db()
-    try:
-        db_execute(conn, """
-            UPDATE users SET name = ?, email = ?, role = ?
-            WHERE user_id = ?
-        """, (name, email, role, user_id))
-        conn.commit()
-        flash(f"User updated successfully.", "success")
-    except Exception:
-        conn.rollback()
-        flash("Email already in use by another user.", "error")
-    conn.close()
-    return redirect(url_for("admin_users"))
-    
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=False, host="0.0.0.0", port=port)
