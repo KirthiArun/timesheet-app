@@ -21,7 +21,7 @@ APP_WORK_CODES = [
     'OTTRAIN', 'PRWS', 'QATEST', 'SHAWS', 'Vacation'
 ]
 
-VACATION_NOTIFY_EMAILS = ["kirthika@zydesoft.com", "sivanraj@zydesoft.com"]
+VACATION_NOTIFY_EMAILS = ["zydetools@gmail.com"]
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "be-kind-you-never-know-what-the-other-person-is-going-through")
@@ -1291,7 +1291,7 @@ def vacation():
                         import resend
                         resend.api_key = resend_key
                         resend.Emails.send({
-                            "from":    "Zydesoft Timesheet <onboarding@resend.dev>",
+                            "from":    "Zydesoft Timesheet <zydetools@gmail.com>",
                             "to":      VACATION_NOTIFY_EMAILS,
                             "subject": f"🌴 Vacation Notice — {name} ({len(entries_copy)} day{'s' if len(entries_copy) != 1 else ''}, {total_hours} hrs)",
                             "html":    html_body
@@ -1336,7 +1336,7 @@ with app.app_context():
 @app.route("/health")
 def health():
     return {"status": "ok"}, 200
-    
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=False, host="0.0.0.0", port=port)
