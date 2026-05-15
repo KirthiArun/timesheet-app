@@ -1462,13 +1462,6 @@ def forgot_password():
 
             conn = get_db()
             # Store token in DB — add column if needed
-            try:
-                db_execute(conn, "ALTER TABLE users ADD COLUMN reset_token TEXT DEFAULT NULL")
-                db_execute(conn, "ALTER TABLE users ADD COLUMN reset_token_exp TEXT DEFAULT NULL")
-                conn.commit()
-            except Exception:
-                pass  # columns already exist
-
             db_execute(conn, """
                 UPDATE users SET reset_token = ?, reset_token_exp = ? WHERE user_id = ?
             """, (token, token_exp, user["user_id"]))
