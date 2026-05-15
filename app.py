@@ -21,7 +21,7 @@ APP_WORK_CODES = [
     'OTTRAIN', 'PRWS', 'QATEST', 'SHAWS', 'Vacation'
 ]
 
-VACATION_NOTIFY_EMAILS = ["kirthika@zydesoft.com", "sivanraj@zydesoft.com"]
+VACATION_NOTIFY_EMAILS = ["zydetools@gmail.com"]
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "be-kind-you-never-know-what-the-other-person-is-going-through")
@@ -97,10 +97,12 @@ def init_db():
 
         # Add new user columns if missing (safe for existing DBs)
         for col, defn in [
-            ("team",          "TEXT DEFAULT ''"),
-            ("description",   "TEXT DEFAULT ''"),
-            ("rate_per_hour", "REAL DEFAULT 0"),
-            ("hike",          "REAL DEFAULT 0"),
+            ("team",            "TEXT DEFAULT ''"),
+            ("description",     "TEXT DEFAULT ''"),
+            ("rate_per_hour",   "REAL DEFAULT 0"),
+            ("hike",            "REAL DEFAULT 0"),
+            ("reset_token",     "TEXT DEFAULT NULL"),
+            ("reset_token_exp", "TEXT DEFAULT NULL"),
         ]:
             if not column_exists(conn, "users", col):
                 cur.execute(f"ALTER TABLE users ADD COLUMN {col} {defn}")
@@ -167,6 +169,10 @@ def init_db():
             cur.execute("ALTER TABLE users ADD COLUMN rate_per_hour REAL DEFAULT 0")
         if not column_exists(conn, "users", "hike"):
             cur.execute("ALTER TABLE users ADD COLUMN hike REAL DEFAULT 0")
+        if not column_exists(conn, "users", "reset_token"):
+            cur.execute("ALTER TABLE users ADD COLUMN reset_token TEXT DEFAULT NULL")
+        if not column_exists(conn, "users", "reset_token_exp"):
+            cur.execute("ALTER TABLE users ADD COLUMN reset_token_exp TEXT DEFAULT NULL")
         cur.execute("""
         CREATE TABLE IF NOT EXISTS shows (
             show_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -369,27 +375,19 @@ def get_show_work_codes(conn, show_id=None):
 
 def do_sheets_sync(user_id):
     if not SHEETS_SYNC_ENABLED:
-        print(f"[SheetsSync] Skipping — sync not enabled")
         return
-
-    print(f"[SheetsSync] Starting sync for user {user_id}")
 
     def _sync():
         try:
-            print(f"[SheetsSync] Thread running for user {user_id}")
             ok, err = sync_user_to_sheet(user_id)
             if not ok:
                 print(f"[SheetsSync] Sync failed for user {user_id}: {err}")
             else:
                 print(f"[SheetsSync] Sync complete for user {user_id}")
         except Exception as e:
-            import traceback
             print(f"[SheetsSync] Sync error for user {user_id}: {e}")
-            print(traceback.format_exc())
 
-    t = threading.Thread(target=_sync, daemon=True)
-    t.start()
-    print(f"[SheetsSync] Thread started: {t.name}")
+    threading.Thread(target=_sync, daemon=True).start()
 
 def generate_password(length=10):
     alphabet = string.ascii_letters + string.digits
@@ -1290,7 +1288,7 @@ def vacation():
                         import resend
                         resend.api_key = resend_key
                         resend.Emails.send({
-                            "from": "Zydesoft Timesheet <noreply@zydesoft.com>",
+                            "from":    "Zydesoft Timesheet <zydetools@gmail.com>",
                             "to":      VACATION_NOTIFY_EMAILS,
                             "subject": f"🌴 Vacation Notice — {name} ({len(entries_copy)} day{'s' if len(entries_copy) != 1 else ''}, {total_hours} hrs)",
                             "html":    html_body
@@ -1326,6 +1324,232 @@ def vacation():
 
     return render_template("vacation.html", vacation_entries=vacation_entries, year=year)
 
+
+
+
+# ── Bulk Import Endpoint ──────────────────────────────────────────────────────
+
+IMPORT_API_KEY = "zydesoft-import-2026"
+
+@app.route("/admin/import-entries", methods=["POST"])
+def import_entries():
+    """
+    Bulk import endpoint called by import_may_entries.gs Apps Script.
+    Accepts JSON: { api_key, entries: [{employee_name, work_date, show_label, work_code, hours, comments}] }
+    Returns: { ok, imported, skipped }
+    """
+    data = request.get_json(silent=True)
+    if not data:
+        return {"ok": False, "error": "Invalid JSON"}, 400
+
+    if data.get("api_key") != IMPORT_API_KEY:
+        return {"ok": False, "error": "Unauthorized"}, 401
+
+    entries  = data.get("entries", [])
+    imported = 0
+    skipped  = 0
+    now      = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    conn = get_db()
+
+    for e in entries:
+        try:
+            employee_name = e.get("employee_name", "").strip()
+            work_date     = e.get("work_date", "").strip()
+            show_label    = e.get("show_label", "").strip()
+            work_code     = e.get("work_code", "").strip()
+            hours         = float(e.get("hours", 0))
+            comments      = e.get("comments", "").strip() or work_code
+
+            if not employee_name or not work_date or not work_code or hours <= 0:
+                skipped += 1
+                continue
+
+            # Find user by name
+            user = db_execute(conn,
+                "SELECT user_id FROM users WHERE name = ?", (employee_name,)
+            ).fetchone()
+            if not user:
+                print(f"[Import] User not found: {employee_name}")
+                skipped += 1
+                continue
+
+            user_id = user["user_id"]
+
+            # Find work code
+            wc = db_execute(conn,
+                "SELECT work_code_id FROM work_codes WHERE LOWER(code) = LOWER(?)", (work_code,)
+            ).fetchone()
+            if not wc:
+                print(f"[Import] Work code not found: {work_code}")
+                skipped += 1
+                continue
+
+            work_code_id = wc["work_code_id"]
+
+            # Find show by label — format "YEAR - CODE - NAME" or just show name
+            show_id = None
+            if show_label:
+                parts = [p.strip() for p in show_label.split(" - ", 2)]
+                if len(parts) == 3:
+                    show = db_execute(conn, """
+                        SELECT show_id FROM shows
+                        WHERE year = ? AND show_code = ? AND show_name = ?
+                    """, (parts[0], parts[1], parts[2])).fetchone()
+                elif len(parts) == 1:
+                    show = db_execute(conn, """
+                        SELECT show_id FROM shows
+                        WHERE LOWER(show_name) = LOWER(?)
+                    """, (parts[0],)).fetchone()
+                else:
+                    show = None
+
+                if show:
+                    show_id = show["show_id"]
+
+            # Skip if exact duplicate already exists
+            existing = db_execute(conn, """
+                SELECT entry_id FROM timesheet_entries
+                WHERE user_id = ? AND work_date = ? AND work_code_id = ?
+                  AND show_id IS NOT DISTINCT FROM ? AND hours = ?
+            """ if DATABASE_URL else """
+                SELECT entry_id FROM timesheet_entries
+                WHERE user_id = ? AND work_date = ? AND work_code_id = ?
+                  AND (show_id = ? OR (show_id IS NULL AND ? IS NULL)) AND hours = ?
+            """,
+            (user_id, work_date, work_code_id, show_id, hours) if DATABASE_URL else
+            (user_id, work_date, work_code_id, show_id, show_id, hours)
+            ).fetchone()
+
+            if existing:
+                skipped += 1
+                continue
+
+            db_execute(conn, """
+                INSERT INTO timesheet_entries
+                (user_id, show_id, work_code_id, work_date, hours, comments, created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?)
+            """, (user_id, show_id, work_code_id, work_date, hours, comments, now, now))
+            imported += 1
+
+        except Exception as ex:
+            print(f"[Import] Row error: {ex}")
+            skipped += 1
+
+    conn.commit()
+    conn.close()
+
+    print(f"[Import] Done — {imported} imported, {skipped} skipped")
+    return {"ok": True, "imported": imported, "skipped": skipped}
+
+
+# ── Password Reset ────────────────────────────────────────────────────────────
+
+import secrets as _secrets
+
+@app.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        conn  = get_db()
+        user  = db_execute(conn, "SELECT user_id, name FROM users WHERE email = ?", (email,)).fetchone()
+        conn.close()
+
+        # Always show success to prevent email enumeration
+        if user:
+            token     = _secrets.token_urlsafe(32)
+            token_exp = (datetime.now() + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+
+            conn = get_db()
+            # Store token in DB — add column if needed
+            try:
+                db_execute(conn, "ALTER TABLE users ADD COLUMN reset_token TEXT DEFAULT NULL")
+                db_execute(conn, "ALTER TABLE users ADD COLUMN reset_token_exp TEXT DEFAULT NULL")
+                conn.commit()
+            except Exception:
+                pass  # columns already exist
+
+            db_execute(conn, """
+                UPDATE users SET reset_token = ?, reset_token_exp = ? WHERE user_id = ?
+            """, (token, token_exp, user["user_id"]))
+            conn.commit()
+            conn.close()
+
+            reset_url = url_for("reset_password", token=token, _external=True)
+
+            # Send email via Resend
+            def _send_reset():
+                try:
+                    import resend
+                    resend.api_key = os.environ.get("RESEND_API_KEY", "")
+                    resend.Emails.send({
+                        "from":    "Zydesoft Timesheet <noreply@zydesoft.com>",
+                        "to":      [email],
+                        "subject": "Reset your timesheet password",
+                        "html":    f"""
+                        <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:24px;">
+                            <h2 style="color:#1a2236;">Reset Your Password</h2>
+                            <p>Hi {user["name"]},</p>
+                            <p>Click the button below to reset your password. This link expires in 1 hour.</p>
+                            <a href="{reset_url}"
+                               style="display:inline-block;background:#1a2236;color:#fff;
+                                      padding:12px 24px;border-radius:6px;text-decoration:none;
+                                      font-weight:bold;margin:16px 0;">
+                                Reset Password
+                            </a>
+                            <p style="color:#888;font-size:12px;">If you didn't request this, ignore this email.</p>
+                            <p style="color:#aaa;font-size:11px;">Link: {reset_url}</p>
+                        </div>"""
+                    })
+                    print(f"[PasswordReset] Email sent to {email}")
+                except Exception as ex:
+                    print(f"[PasswordReset] Email failed: {ex}")
+
+            threading.Thread(target=_send_reset, daemon=True).start()
+
+        flash("If that email exists, a reset link has been sent.", "success")
+        return redirect(url_for("forgot_password"))
+
+    return render_template("forgot_password.html")
+
+
+@app.route("/reset-password/<token>", methods=["GET", "POST"])
+def reset_password(token):
+    conn = get_db()
+    user = db_execute(conn, """
+        SELECT user_id, name FROM users
+        WHERE reset_token = ? AND reset_token_exp > ?
+    """, (token, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))).fetchone()
+    conn.close()
+
+    if not user:
+        flash("This reset link is invalid or has expired. Please request a new one.", "error")
+        return redirect(url_for("forgot_password"))
+
+    if request.method == "POST":
+        password = request.form.get("password", "").strip()
+        confirm  = request.form.get("confirm", "").strip()
+
+        if len(password) < 8:
+            flash("Password must be at least 8 characters.", "error")
+            return render_template("reset_password.html", token=token, name=user["name"])
+
+        if password != confirm:
+            flash("Passwords do not match.", "error")
+            return render_template("reset_password.html", token=token, name=user["name"])
+
+        conn = get_db()
+        db_execute(conn, """
+            UPDATE users SET password = ?, reset_token = NULL, reset_token_exp = NULL
+            WHERE user_id = ?
+        """, (generate_password_hash(password), user["user_id"]))
+        conn.commit()
+        conn.close()
+
+        flash("Password updated successfully. Please log in.", "success")
+        return redirect(url_for("login"))
+
+    return render_template("reset_password.html", token=token, name=user["name"])
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
