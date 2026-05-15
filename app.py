@@ -1461,7 +1461,6 @@ def forgot_password():
             token_exp = (datetime.now() + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
 
             conn = get_db()
-            # Store token in DB — add column if needed
             db_execute(conn, """
                 UPDATE users SET reset_token = ?, reset_token_exp = ? WHERE user_id = ?
             """, (token, token_exp, user["user_id"]))

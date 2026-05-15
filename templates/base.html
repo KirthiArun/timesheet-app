@@ -32,7 +32,6 @@
 {% endif %}
 
 <main class="{% if session.get('user_id') %}content{% else %}login-content{% endif %}">
-    {{# REPLACE WITH #}
     {% if request.endpoint != 'login' %}
     {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
