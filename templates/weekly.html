@@ -52,4 +52,17 @@
         </tbody>
     </table>
 </div>
+<style>
+.panel table { table-layout: fixed; width: 100%; }
+.panel table th:nth-child(1),
+.panel table td:nth-child(1) { width: 120px; white-space: nowrap; }
+.panel table th:nth-child(2),
+.panel table td:nth-child(2) { width: 30%; }
+.panel table th:nth-child(3),
+.panel table td:nth-child(3) { width: 12%; }
+.panel table th:nth-child(4),
+.panel table td:nth-child(4) { width: 8%; }
+.panel table th:nth-child(5),
+.panel table td:nth-child(5) { width: auto; font-size: 13px; color: #555; overflow: hidden; text-overflow: ellipsis; }
+</style>
 {% endblock %}
