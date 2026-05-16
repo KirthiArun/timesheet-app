@@ -13,7 +13,7 @@
 {% if session.get("user_id") %}
 <div class="sidebar">
     <div class="brand">
-        <img src="{{ url_for('static', filename='logo.png') }}" class="logo" onerror="this.style.display='none'">
+        <img src="{{ url_for('static', filename='z-circle.png') }}" class="logo" onerror="this.style.display='none'">
         <span class="brand-name">TimeFlow</span>
     </div>
     <a href="{{ url_for('dashboard') }}" class="{% if request.endpoint == 'dashboard' %}active{% endif %}">Dashboard</a>
