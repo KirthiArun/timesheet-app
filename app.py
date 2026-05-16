@@ -1311,12 +1311,15 @@ def vacation():
     # Fetch this year's vacation entries for display
     conn  = get_db()
     year  = date.today().year
+
     vacation_entries = db_execute(conn, """
-        SELECT t.work_date, t.hours, t.comments
+       SELECT t.work_date, t.hours, t.comments
         FROM timesheet_entries t
         JOIN work_codes w ON t.work_code_id = w.work_code_id
+        LEFT JOIN shows s ON t.show_id = s.show_id
         WHERE t.user_id = ?
           AND LOWER(w.code) = 'vacation'
+          AND LOWER(COALESCE(s.show_name, '')) != 'holiday'
           AND t.work_date BETWEEN ? AND ?
         ORDER BY t.work_date ASC
     """, (session["user_id"], f"{year}-01-01", f"{year}-12-31")).fetchall()
