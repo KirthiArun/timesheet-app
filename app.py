@@ -1407,18 +1407,18 @@ def import_entries():
                 if show:
                     show_id = show["show_id"]
 
-            # Skip if exact duplicate already exists
+            # Skip only if exact duplicate (same user, date, show, workcode, hours AND comments)
             existing = db_execute(conn, """
                 SELECT entry_id FROM timesheet_entries
                 WHERE user_id = ? AND work_date = ? AND work_code_id = ?
-                  AND show_id IS NOT DISTINCT FROM ? AND hours = ?
+                  AND show_id IS NOT DISTINCT FROM ? AND hours = ? AND comments = ?
             """ if DATABASE_URL else """
                 SELECT entry_id FROM timesheet_entries
                 WHERE user_id = ? AND work_date = ? AND work_code_id = ?
-                  AND (show_id = ? OR (show_id IS NULL AND ? IS NULL)) AND hours = ?
+                  AND (show_id = ? OR (show_id IS NULL AND ? IS NULL)) AND hours = ? AND comments = ?
             """,
-            (user_id, work_date, work_code_id, show_id, hours) if DATABASE_URL else
-            (user_id, work_date, work_code_id, show_id, show_id, hours)
+            (user_id, work_date, work_code_id, show_id, hours, comments) if DATABASE_URL else
+            (user_id, work_date, work_code_id, show_id, show_id, hours, comments)
             ).fetchone()
 
             if existing:
