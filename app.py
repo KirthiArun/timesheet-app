@@ -1065,6 +1065,8 @@ def admin_delete_user(user_id):
         flash("Cannot delete your own account.", "error")
         return redirect(url_for("admin_users"))
     conn = get_db()
+    db_execute(conn, "DELETE FROM notifications WHERE user_id = ?", (user_id,))
+    db_execute(conn, "DELETE FROM timesheet_entries WHERE user_id = ?", (user_id,))
     db_execute(conn, "DELETE FROM users WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
