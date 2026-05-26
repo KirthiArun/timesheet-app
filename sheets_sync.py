@@ -223,7 +223,19 @@ def sync_user_to_sheet(user_id):
         write_rows(service, tab_name, rows)
         format_header(service, sheet_id)
 
-        print(f"[SheetsSync] ✅ Synced {tab_name} — {len(rows) - 1} row(s)")
+        # Verify row count matches
+        verify = service.spreadsheets().values().get(
+            spreadsheetId=MASTER_SHEET_ID,
+            range=f"'{tab_name}'!A:A"
+        ).execute()
+        sheet_count = len(verify.get("values", [])) - 1  # subtract header
+        db_count    = len(rows) - 1
+
+        if sheet_count != db_count:
+            print(f"[SheetsSync] ⚠️ Count mismatch for {tab_name}: DB={db_count} Sheet={sheet_count} — will retry")
+            return False, f"Count mismatch: DB={db_count} Sheet={sheet_count}"
+
+        print(f"[SheetsSync] ✅ Synced {tab_name} — {db_count} row(s) verified")
         return True, None
 
     except Exception as e:

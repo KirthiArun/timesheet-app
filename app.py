@@ -12,6 +12,7 @@ load_dotenv()
 import psycopg
 import sqlite3
 import threading
+import time
 
 # ── App + DB config ───────────────────────────────────────────────────────────
 
@@ -373,19 +374,31 @@ def get_show_work_codes(conn, show_id=None):
     ).fetchall()
 
 
+MAX_SYNC_RETRIES = 3
+
 def do_sheets_sync(user_id):
     if not SHEETS_SYNC_ENABLED:
         return
 
+    print(f"[SheetsSync] Starting sync for user {user_id}")
+
     def _sync():
-        try:
-            ok, err = sync_user_to_sheet(user_id)
-            if not ok:
-                print(f"[SheetsSync] Sync failed for user {user_id}: {err}")
-            else:
-                print(f"[SheetsSync] Sync complete for user {user_id}")
-        except Exception as e:
-            print(f"[SheetsSync] Sync error for user {user_id}: {e}")
+        for attempt in range(1, MAX_SYNC_RETRIES + 1):
+            try:
+                print(f"[SheetsSync] Attempt {attempt}/{MAX_SYNC_RETRIES} for user {user_id}")
+                ok, err = sync_user_to_sheet(user_id)
+                if ok:
+                    print(f"[SheetsSync] Sync complete for user {user_id} (attempt {attempt})")
+                    return
+                else:
+                    print(f"[SheetsSync] Sync failed for user {user_id}: {err}")
+            except Exception as e:
+                print(f"[SheetsSync] Sync error for user {user_id} attempt {attempt}: {e}")
+
+            if attempt < MAX_SYNC_RETRIES:
+                time.sleep(2 ** attempt)  # exponential backoff: 2s, 4s
+
+        print(f"[SheetsSync] ❌ All {MAX_SYNC_RETRIES} attempts failed for user {user_id}")
 
     threading.Thread(target=_sync, daemon=True).start()
 
@@ -1290,7 +1303,7 @@ def vacation():
                         import resend
                         resend.api_key = resend_key
                         resend.Emails.send({
-                            "from":    "Zydesoft Timesheet <zydetools@gmail.com>",
+                            "from":    "Zydesoft Timesheet <noreply@zydesoft.com>",
                             "to":      VACATION_NOTIFY_EMAILS,
                             "subject": f"🌴 Vacation Notice — {name} ({len(entries_copy)} day{'s' if len(entries_copy) != 1 else ''}, {total_hours} hrs)",
                             "html":    html_body
