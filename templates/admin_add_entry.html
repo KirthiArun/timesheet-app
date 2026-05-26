@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Add Timesheet Entry</h1>
+        <p>Add an entry on behalf of any team member.</p>
+    </div>
+</div>
+
+<div class="form-panel" style="max-width:680px;">
+    <form method="POST" class="timesheet-form" id="adminEntryForm">
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+
+            <div>
+                <label>Team Member <span class="req">*</span></label>
+                <select name="user_id" id="user_id" required>
+                    <option value="">— Select user —</option>
+                    {% for u in users %}
+                    <option value="{{ u.user_id }}">{{ u.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div>
+                <label>Date <span class="req">*</span></label>
+                <input type="date" name="work_date" id="work_date" value="{{ today }}" required>
+            </div>
+
+        </div>
+
+        <div>
+            <label>Show <span class="req">*</span></label>
+            <div class="show-picker" id="showPickerWrapper">
+                <div class="show-picker-trigger" id="showTrigger">
+                    <span id="showTriggerText" class="placeholder">Click to select a show…</span>
+                    <span class="arrow">▾</span>
+                </div>
+                <input type="hidden" name="show_id" id="show_id">
+                <div class="show-picker-dropdown" id="showDropdown">
+                    <div class="show-picker-search">
+                        <input type="text" id="show_filter" placeholder="Type to filter shows…" autocomplete="off">
+                    </div>
+                    <div class="show-picker-options" id="showOptionsList">
+                        {% for s in shows %}
+                        <div class="show-opt"
+                             data-value="{{ s.show_id }}"
+                             data-text="{{ s.year }} - {{ s.show_code }} - {{ s.show_name }}">
+                            <span class="show-opt-year">{{ s.year }}</span>
+                            <span class="show-opt-code">{{ s.show_code }}</span>
+                            <span class="show-opt-name">{{ s.show_name }}</span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 120px;gap:14px;">
+
+            <div>
+                <label>Work Code <span class="req">*</span></label>
+                <select name="work_code_id" id="work_code_id" required>
+                    <option value="">— Select —</option>
+                    {% for c in codes %}
+                    <option value="{{ c.work_code_id }}">{{ c.code }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div>
+                <label>Hours <span class="req">*</span></label>
+                <input type="number" name="hours" id="hours"
+                       step="0.25" min="0.25" max="24" placeholder="8" required>
+            </div>
+
+        </div>
+
+        <div>
+            <label>Notes <span class="req">*</span></label>
+            <textarea name="comments" id="comments" rows="2"
+                placeholder="Briefly describe what was worked on" required></textarea>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:14px;padding-top:4px;">
+            <button type="submit" id="saveBtn">Add Entry</button>
+            <span id="formError" class="form-error" style="display:none;"></span>
+        </div>
+
+    </form>
+</div>
+
+<style>
+.req        { color:#d32f2f; }
+.form-error { color:#d32f2f; font-size:13px; font-weight:600; }
+.timesheet-form { display:flex; flex-direction:column; gap:16px; }
+.timesheet-form label { font-size:12px; font-weight:700; color:#555; text-transform:uppercase; letter-spacing:0.4px; display:block; margin-bottom:6px; }
+
+/* Show Picker */
+.show-picker { position:relative; width:100%; }
+.show-picker-trigger { display:flex; justify-content:space-between; align-items:center; padding:9px 12px; border:1px solid #dde1ea; border-radius:6px; background:#fafbfc; cursor:pointer; font-size:14px; color:#333; transition:border-color 0.15s; user-select:none; }
+.show-picker-trigger:hover { border-color:#4a86e8; }
+.show-picker.open .show-picker-trigger { border-color:#4a86e8; border-radius:6px 6px 0 0; background:#fff; }
+.show-picker-trigger .placeholder { color:#aaa; }
+.show-picker-trigger .arrow { color:#aaa; font-size:12px; transition:transform 0.15s; }
+.show-picker.open .arrow { transform:rotate(180deg); }
+.show-picker-dropdown { display:none; position:fixed; z-index:9999; background:#fff; border:1px solid #4a86e8; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.15); width:600px; max-width:90vw; }
+.show-picker.open .show-picker-dropdown { display:block; }
+.show-picker-search { padding:8px; border-bottom:1px solid #eee; }
+.show-picker-search input { width:100%; padding:8px 10px; border:1px solid #dde1ea; border-radius:5px; font-size:13px; color:#333; }
+.show-picker-search input:focus { outline:none; border-color:#4a86e8; }
+.show-picker-options { max-height:260px; overflow-y:auto; }
+.show-opt { display:flex; gap:8px; align-items:baseline; padding:9px 12px; cursor:pointer; border-bottom:1px solid #f5f5f5; transition:background 0.1s; }
+.show-opt:hover { background:#f0f4ff; }
+.show-opt.hidden { display:none; }
+.show-opt.selected { background:#e8f0fe; }
+.show-opt-year { font-size:11px; font-weight:700; color:#fff; background:#1a2236; padding:2px 6px; border-radius:3px; white-space:nowrap; }
+.show-opt-code { font-size:12px; font-weight:700; color:#4a86e8; white-space:nowrap; }
+.show-opt-name { font-size:13px; color:#444; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+</style>
+
+<script>
+// ── Show Picker ───────────────────────────────────────────────────────────────
+const trigger     = document.getElementById("showTrigger");
+const triggerText = document.getElementById("showTriggerText");
+const showIdInput = document.getElementById("show_id");
+const showFilter  = document.getElementById("show_filter");
+const pickerWrap  = document.getElementById("showPickerWrapper");
+const allOpts     = Array.from(document.querySelectorAll(".show-opt"));
+
+trigger.addEventListener("click", () => {
+    const isOpen = pickerWrap.classList.contains("open");
+    if (isOpen) { pickerWrap.classList.remove("open"); return; }
+    const rect     = trigger.getBoundingClientRect();
+    const dropdown = document.getElementById("showDropdown");
+    dropdown.style.top   = (rect.bottom + window.scrollY + 4) + "px";
+    dropdown.style.left  = rect.left + "px";
+    dropdown.style.width = Math.max(rect.width, 500) + "px";
+    pickerWrap.classList.add("open");
+    setTimeout(() => showFilter.focus(), 30);
+});
+
+showFilter.addEventListener("input", function () {
+    const q = this.value.toLowerCase();
+    allOpts.forEach(opt => opt.classList.toggle("hidden", !opt.dataset.text.toLowerCase().includes(q)));
+});
+
+allOpts.forEach(opt => {
+    opt.addEventListener("mousedown", function (e) {
+        e.preventDefault();
+        triggerText.textContent = this.dataset.text;
+        triggerText.classList.remove("placeholder");
+        showIdInput.value = this.dataset.value;
+        allOpts.forEach(o => o.classList.remove("selected"));
+        this.classList.add("selected");
+        pickerWrap.classList.remove("open");
+        showFilter.value = "";
+        allOpts.forEach(o => o.classList.remove("hidden"));
+    });
+});
+
+document.addEventListener("click", function (e) {
+    if (!pickerWrap.contains(e.target)) {
+        pickerWrap.classList.remove("open");
+        showFilter.value = "";
+        allOpts.forEach(o => o.classList.remove("hidden"));
+    }
+});
+
+// ── Form Validation ───────────────────────────────────────────────────────────
+document.getElementById("adminEntryForm").addEventListener("submit", function (e) {
+    const errEl = document.getElementById("formError");
+    errEl.style.display = "none";
+
+    const checks = [
+        [document.getElementById("user_id").value.trim(),      "Please select a team member."],
+        [document.getElementById("work_date").value.trim(),    "Date is required."],
+        [document.getElementById("show_id").value.trim(),      "Please select a show."],
+        [document.getElementById("work_code_id").value.trim(), "Please select a work code."],
+        [document.getElementById("hours").value.trim(),        "Hours is required."],
+        [(document.getElementById("comments").value||"").trim(),"Notes are required."],
+    ];
+
+    for (const [val, msg] of checks) {
+        if (!val) {
+            e.preventDefault();
+            errEl.textContent   = msg;
+            errEl.style.display = "inline";
+            return;
+        }
+    }
+
+    const btn = document.getElementById("saveBtn");
+    btn.textContent = "Adding…";
+    btn.disabled    = true;
+});
+</script>
+{% endblock %}

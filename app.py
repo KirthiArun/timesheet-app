@@ -1561,6 +1561,50 @@ def reset_password(token):
 
     return render_template("reset_password.html", token=token, name=user["name"])
 
+@app.route("/admin/add-entry", methods=["GET", "POST"])
+@login_required
+@admin_required
+def admin_add_entry():
+    conn  = get_db()
+    users = db_execute(conn, "SELECT user_id, name FROM users WHERE role='user' ORDER BY name").fetchall()
+    shows = db_execute(conn, "SELECT show_id, year, show_code, show_name FROM shows WHERE active_flag='Y' ORDER BY year DESC, show_name").fetchall()
+    codes = db_execute(conn, "SELECT work_code_id, code FROM work_codes ORDER BY code").fetchall()
+
+    if request.method == "POST":
+        user_id      = request.form.get("user_id", "").strip()
+        show_id      = request.form.get("show_id", "").strip()
+        work_code_id = request.form.get("work_code_id", "").strip()
+        work_date    = request.form.get("work_date", "").strip()
+        hours        = request.form.get("hours", "").strip()
+        comments     = request.form.get("comments", "").strip()
+
+        if not all([user_id, show_id, work_code_id, work_date, hours, comments]):
+            flash("All fields are required.", "error")
+        else:
+            try:
+                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                db_execute(conn, """
+                    INSERT INTO timesheet_entries
+                    (user_id, show_id, work_code_id, work_date, hours, comments, created_at, updated_at)
+                    VALUES (?,?,?,?,?,?,?,?)
+                """, (user_id, show_id, work_code_id, work_date, float(hours), comments, now, now))
+                conn.commit()
+
+                # Sync to sheet
+                do_sheets_sync(int(user_id))
+
+                # Get user name for confirmation
+                user = db_execute(conn, "SELECT name FROM users WHERE user_id=?", (user_id,)).fetchone()
+                flash(f"Entry added for {user['name']} on {work_date}.", "success")
+            except Exception as e:
+                conn.rollback()
+                flash(f"Error adding entry: {str(e)}", "error")
+
+    conn.close()
+    return render_template("admin_add_entry.html",
+        users=users, shows=shows, codes=codes,
+        today=date.today().isoformat()
+    )
 # ── Startup ───────────────────────────────────────────────────────────────────
 
 with app.app_context():

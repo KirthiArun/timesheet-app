@@ -24,7 +24,8 @@
     {% endif %}
     {% if session.get("role") == "admin" %}
     <a href="{{ url_for('reports') }}" class="{% if request.endpoint == 'reports' %}active{% endif %}">Reports</a>
-    <a href="{{ url_for('admin_users') }}" class="{% if request.endpoint == 'admin_users' %}active{% endif %}">Manage Users</a>
+   <a href="{{ url_for('admin_users') }}" class="{% if request.endpoint == 'admin_users' %}active{% endif %}">Manage Users</a>
+    <a href="{{ url_for('admin_add_entry') }}" class="{% if request.endpoint == 'admin_add_entry' %}active{% endif %}">Add Entry</a>
     <a href="{{ url_for('admin_sync_shows') }}" class="sync-link">↻ Sync Shows</a>
     {% endif %}
     <a href="{{ url_for('logout') }}" class="logout-link">Logout</a>
