@@ -22,7 +22,7 @@ APP_WORK_CODES = [
     'OTTRAIN', 'PRWS', 'QATEST', 'SHAWS', 'Vacation'
 ]
 
-VACATION_NOTIFY_EMAILS = ["zydetools@gmail.com"]
+VACATION_NOTIFY_EMAILS = ["kirthika@zydesoft.com", "sivanraj@zydesoft.com"]
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "be-kind-you-never-know-what-the-other-person-is-going-through")
