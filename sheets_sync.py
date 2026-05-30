@@ -4,7 +4,7 @@
 # Called on every save / edit / delete in app.py.
 # ============================================================
 
-import os, base64, json, sqlite3
+import os, base64, json, sqlite3, threading
 from datetime import datetime
 from dotenv import load_dotenv
 load_dotenv()
@@ -22,6 +22,11 @@ MASTER_SHEET_ID = "1ENTP8XLLoFISNwLvF5Z7mM6X-ycYcOAERvcyoQ-dqhk"
 DB_NAME         = "timesheet.db"
 
 print(f"[SheetsSync] DATABASE_URL set: {bool(DATABASE_URL)}")
+
+_sheets_service      = None
+_sheets_service_lock = threading.Lock()
+_tab_id_cache        = {}       # tab_name -> sheetId
+_formatted_tabs      = set()    # tab names that already have header formatting
 
 WORK_CODE_COLUMNS = [
     "EAAEP", "EAALU", "EACRO", "EADATST", "EADMT",
@@ -65,28 +70,26 @@ def db_execute(conn, sql, params=()):
 # ── Sheets service ────────────────────────────────────────────────────────────
 
 def get_sheets_service():
-    b64 = os.environ.get("GOOGLE_CREDENTIALS_B64", "")
-    if b64:
-        info  = json.loads(base64.b64decode(b64).decode("utf-8"))
-        creds = Credentials.from_service_account_info(info, scopes=SCOPES)
-    else:
-        creds = Credentials.from_service_account_file("service_account.json", scopes=SCOPES)
-    return build("sheets", "v4", credentials=creds)
+    global _sheets_service
+    with _sheets_service_lock:
+        if _sheets_service is None:
+            b64 = os.environ.get("GOOGLE_CREDENTIALS_B64", "")
+            if b64:
+                info  = json.loads(base64.b64decode(b64).decode("utf-8"))
+                creds = Credentials.from_service_account_info(info, scopes=SCOPES)
+            else:
+                creds = Credentials.from_service_account_file("service_account.json", scopes=SCOPES)
+            _sheets_service = build("sheets", "v4", credentials=creds, cache_discovery=False)
+    return _sheets_service
 
 
 # ── Data fetchers ─────────────────────────────────────────────────────────────
 
-def fetch_user(user_id):
+def fetch_user_and_entries(user_id):
     conn = get_db()
     user = db_execute(conn,
         "SELECT user_id, name, email FROM users WHERE user_id = ?", (user_id,)
     ).fetchone()
-    conn.close()
-    return user
-
-
-def fetch_all_entries_for_user(user_id):
-    conn = get_db()
     rows = db_execute(conn, """
         SELECT
             t.work_date,
@@ -103,7 +106,7 @@ def fetch_all_entries_for_user(user_id):
         ORDER BY t.work_date ASC, s.show_code ASC
     """, (user_id,)).fetchall()
     conn.close()
-    return rows
+    return user, rows
 
 
 # ── Row builder ───────────────────────────────────────────────────────────────
@@ -159,11 +162,13 @@ def build_sheet_rows(tab_name, db_entries):
 # ── Sheet operations ──────────────────────────────────────────────────────────
 
 def get_tab_sheet_id(service, tab_name):
-    spreadsheet = service.spreadsheets().get(spreadsheetId=MASTER_SHEET_ID).execute()
-    for sheet in spreadsheet.get("sheets", []):
-        if sheet["properties"]["title"] == tab_name:
-            return sheet["properties"]["sheetId"]
-    raise ValueError(f"Tab '{tab_name}' not found in master sheet. Run 1_create_and_share.js first.")
+    if tab_name not in _tab_id_cache:
+        spreadsheet = service.spreadsheets().get(spreadsheetId=MASTER_SHEET_ID).execute()
+        for sheet in spreadsheet.get("sheets", []):
+            _tab_id_cache[sheet["properties"]["title"]] = sheet["properties"]["sheetId"]
+    if tab_name not in _tab_id_cache:
+        raise ValueError(f"Tab '{tab_name}' not found in master sheet. Run 1_create_and_share.js first.")
+    return _tab_id_cache[tab_name]
 
 
 def clear_tab(service, tab_name):
@@ -209,19 +214,21 @@ def format_header(service, sheet_id):
 
 def sync_user_to_sheet(user_id):
     try:
-        user = fetch_user(user_id)
+        user, db_entries = fetch_user_and_entries(user_id)
         if not user:
             return False, f"User {user_id} not found in DB"
 
-        tab_name   = user["name"].strip()
-        service    = get_sheets_service()
-        sheet_id   = get_tab_sheet_id(service, tab_name)
-        db_entries = fetch_all_entries_for_user(user_id)
-        rows       = build_sheet_rows(tab_name, db_entries)
+        tab_name = user["name"].strip()
+        service  = get_sheets_service()
+        sheet_id = get_tab_sheet_id(service, tab_name)
+        rows     = build_sheet_rows(tab_name, db_entries)
 
         clear_tab(service, tab_name)
         write_rows(service, tab_name, rows)
-        format_header(service, sheet_id)
+
+        if tab_name not in _formatted_tabs:
+            format_header(service, sheet_id)
+            _formatted_tabs.add(tab_name)
 
         # Verify row count matches
         verify = service.spreadsheets().values().get(

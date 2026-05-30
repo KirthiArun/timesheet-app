@@ -13,6 +13,7 @@ import psycopg
 import sqlite3
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 # ── App + DB config ───────────────────────────────────────────────────────────
 
@@ -376,13 +377,25 @@ def get_show_work_codes(conn, show_id=None):
 
 MAX_SYNC_RETRIES = 3
 
+_sync_executor  = ThreadPoolExecutor(max_workers=2)
+_queued_users   = set()
+_queued_lock    = threading.Lock()
+
 def do_sheets_sync(user_id):
     if not SHEETS_SYNC_ENABLED:
         return
 
+    with _queued_lock:
+        if user_id in _queued_users:
+            return  # a sync is already queued; it will read the latest DB state when it runs
+        _queued_users.add(user_id)
+
     print(f"[SheetsSync] Starting sync for user {user_id}")
 
     def _sync():
+        with _queued_lock:
+            _queued_users.discard(user_id)
+
         for attempt in range(1, MAX_SYNC_RETRIES + 1):
             try:
                 print(f"[SheetsSync] Attempt {attempt}/{MAX_SYNC_RETRIES} for user {user_id}")
@@ -400,7 +413,7 @@ def do_sheets_sync(user_id):
 
         print(f"[SheetsSync] ❌ All {MAX_SYNC_RETRIES} attempts failed for user {user_id}")
 
-    threading.Thread(target=_sync, daemon=True).start()
+    _sync_executor.submit(_sync)
 
 def generate_password(length=10):
     alphabet = string.ascii_letters + string.digits
