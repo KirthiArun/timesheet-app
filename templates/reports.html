@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
 
+{# ── Top progress bar (shown on any navigation) ── #}
+<div id="top-progress"></div>
+
 <div class="page-header">
     <div>
         <h1>Reports</h1>
@@ -67,7 +70,7 @@
             </select>
         </div>
         <div style="display:flex;gap:8px;align-items:flex-end;">
-            <button type="submit" style="flex:1;">Run Report</button>
+            <button type="submit" id="runBtn" style="flex:1;">Run Report</button>
         </div>
     </form>
     {# Quick shortcuts #}
@@ -260,7 +263,7 @@
                        href="{{ url_for('edit_entry', entry_id=e.entry_id, next=request.url) }}">✏ Edit</a>
                     <a class="action-btn delete-btn"
                        href="{{ url_for('delete_entry', entry_id=e.entry_id) }}"
-                       onclick="return confirm('Delete this entry for {{ e.name }} on {{ e.work_date }}?')">🗑 Delete</a>
+                       onclick="return confirmAndProgress('Delete this entry for {{ e.name }} on {{ e.work_date }}?')">🗑 Delete</a>
                 </td>
             </tr>
             {% else %}
@@ -432,6 +435,35 @@
 .page-btn:hover { background: #e8f0fe; }
 .page-btn.disabled { color: #ccc; cursor: default; pointer-events: none; }
 .page-info { font-size: 13px; color: #888; font-weight: 600; }
+
+/* ── Top progress bar ───────────────────────────────────── */
+#top-progress {
+    position: fixed;
+    top: 0; left: 0; height: 3px; width: 0%;
+    background: linear-gradient(90deg, #4a86e8, #34a853);
+    z-index: 99999;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s;
+}
+#top-progress.active {
+    opacity: 1;
+    animation: top-progress-fill 25s cubic-bezier(0.05, 0.8, 0.5, 1) forwards;
+}
+@keyframes top-progress-fill {
+    0%   { width: 0%;   }
+    15%  { width: 40%;  }
+    40%  { width: 65%;  }
+    70%  { width: 80%;  }
+    100% { width: 88%;  }
+}
+
+/* ── Run button loading state ────────────────────────────── */
+#runBtn.loading {
+    opacity: 0.65;
+    cursor: not-allowed;
+    pointer-events: none;
+}
 </style>
 
 <script>
@@ -489,5 +521,42 @@ function fmt(d) {
            String(d.getMonth() + 1).padStart(2, "0") + "-" +
            String(d.getDate()).padStart(2, "0");
 }
+
+// ── Progress bar ──────────────────────────────────────────
+function startProgress() {
+    const bar = document.getElementById("top-progress");
+    if (!bar) return;
+    bar.className = "";
+    void bar.offsetWidth;          // force reflow so animation restarts
+    bar.className = "active";
+}
+
+function confirmAndProgress(msg) {
+    if (!confirm(msg)) return false;
+    startProgress();
+    return true;
+}
+
+// Run Report button
+const reportForm = document.getElementById("reportForm");
+if (reportForm) {
+    reportForm.addEventListener("submit", function () {
+        startProgress();
+        const btn = document.getElementById("runBtn");
+        if (btn) {
+            btn.textContent = "Loading…";
+            btn.classList.add("loading");
+        }
+    });
+}
+
+// Pagination links
+document.querySelectorAll(".page-btn:not(.disabled)").forEach(function (a) {
+    a.addEventListener("click", startProgress);
+});
+
+// Export CSV button
+const exportBtn = document.querySelector(".export-btn");
+if (exportBtn) exportBtn.addEventListener("click", startProgress);
 </script>
 {% endblock %}
