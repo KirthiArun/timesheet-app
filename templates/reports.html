@@ -6,37 +6,29 @@
         <h1>Reports</h1>
         <p>View missing entries, detailed logs, and export data.</p>
     </div>
-</div>
-
-{# ── Quick Period Buttons ── #}
-<div class="report-quick-bar">
-    <a class="quick-btn {% if report_type == 'weekly' %}active{% endif %}"
-       href="{{ url_for('reports', report_type='weekly') }}">📅 This Week</a>
-    <a class="quick-btn {% if report_type == 'monthly' %}active{% endif %}"
-       href="{{ url_for('reports', report_type='monthly') }}">📆 This Month</a>
-    <a class="quick-btn" href="{{ url_for('reports', report_type='custom') }}">🔍 Custom Range</a>
     {% if from_date %}
-    <a class="quick-btn export-btn"
-       href="{{ url_for('export_report', report_type=report_type, from_date=from_date, to_date=to_date, user_id=request.args.get('user_id',''), show_id=request.args.get('show_id',''), work_code_id=request.args.get('work_code_id','')) }}">
-       ⬇ Export CSV
-    </a>
-
+    <div>
+        <a class="button-light export-btn"
+           href="{{ url_for('export_report', report_type=report_type, from_date=from_date, to_date=to_date, user_id=request.args.get('user_id',''), show_id=request.args.get('show_id',''), work_code_id=request.args.get('work_code_id','')) }}">
+           ⬇ Export CSV
+        </a>
+    </div>
     {% endif %}
 </div>
 
-{# ── Custom Filter Form ── #}
-<div class="form-panel" id="customFilter"
-     style="{% if report_type != 'custom' %}display:none;{% endif %}">
-    <h2 style="margin-bottom:14px;">Custom Filter</h2>
-    <form method="GET" class="grid-form">
+{# ── Filter Form (always visible) ── #}
+<div class="form-panel" id="filterPanel">
+    <h2 style="margin-bottom:14px;">Filter</h2>
+    <form method="GET" class="grid-form" id="reportForm">
         <input type="hidden" name="report_type" value="custom">
+        <input type="hidden" name="active_view" id="activeViewInput" value="{{ active_view }}">
         <div>
             <label>From Date</label>
-            <input type="date" name="from_date" value="{{ from_date }}">
+            <input type="date" name="from_date" value="{{ from_date }}" required>
         </div>
         <div>
             <label>To Date</label>
-            <input type="date" name="to_date" value="{{ to_date }}">
+            <input type="date" name="to_date" value="{{ to_date }}" required>
         </div>
         <div>
             <label>User</label>
@@ -75,26 +67,49 @@
             </select>
         </div>
         <div style="display:flex;gap:8px;align-items:flex-end;">
-            <button type="submit" style="flex:1;">Run</button>
-            <a class="button-light"
-               href="{{ url_for('export_report', report_type='custom', from_date=from_date, to_date=to_date) }}"
-               style="flex:1;text-align:center;">⬇ CSV</a>
+            <button type="submit" style="flex:1;">Run Report</button>
         </div>
     </form>
+    {# Quick shortcuts #}
+    <div class="quick-shortcuts">
+        <span style="font-size:12px;color:#aaa;margin-right:6px;">Quick:</span>
+        <button type="button" class="shortcut-btn" onclick="setThisWeek()">This Week</button>
+        <button type="button" class="shortcut-btn" onclick="setThisMonth()">This Month</button>
+        <button type="button" class="shortcut-btn" onclick="setLastMonth()">Last Month</button>
+    </div>
 </div>
 
 {% if from_date %}
 <p class="period-label">
     Showing: <strong>{{ from_date }}</strong> → <strong>{{ to_date }}</strong>
-    {% if report_type != 'custom' %}&nbsp;·&nbsp;
-    <a href="{{ url_for('export_report', report_type=report_type, from_date=from_date, to_date=to_date) }}"
-       style="color:#4a86e8;font-weight:600;">⬇ Download CSV</a>
-    {% endif %}
 </p>
-{% endif %}
 
-{# ── Missing Entries Panel ── #}
-{% if from_date %}
+{# ── View Tabs ── #}
+<div class="view-tabs">
+    <button class="view-tab {% if active_view == 'missing' %}active{% endif %}"
+            onclick="switchTab('missing')">
+        ⚠ Missing
+        {% if missing_report %}<span class="tab-count red">{{ missing_report|length }}</span>{% endif %}
+    </button>
+    <button class="view-tab {% if active_view == 'daily' %}active{% endif %}"
+            onclick="switchTab('daily')">
+        📅 Daily Breakdown
+        {% if daily_breakdown %}<span class="tab-count">{{ daily_breakdown|length }}</span>{% endif %}
+    </button>
+    <button class="view-tab {% if active_view == 'summary' %}active{% endif %}"
+            onclick="switchTab('summary')">
+        📋 Hours Summary
+    </button>
+    <button class="view-tab {% if active_view == 'detailed' %}active{% endif %}"
+            onclick="switchTab('detailed')">
+        📝 Detailed Log
+        {% if total_entries %}<span class="tab-count">{{ total_entries }}</span>{% endif %}
+    </button>
+</div>
+
+{# ── Missing Entries ── #}
+<div class="tab-panel" id="tab-missing"
+     {% if active_view != 'missing' %}style="display:none;"{% endif %}>
 <div class="panel">
     <h2>
         {% if missing_report %}
@@ -103,7 +118,6 @@
         ✓ All Complete
         {% endif %}
     </h2>
-
     {% if missing_report %}
     {% for u in missing_report %}
     <div class="user-missing-block">
@@ -132,12 +146,14 @@
     <p style="color:#43a047;font-weight:600;">All team members have complete entries for this period.</p>
     {% endif %}
 </div>
-{% endif %}
+</div>
 
-{# ── Daily Breakdown by Employee ── #}
-{% if daily_breakdown %}
+{# ── Daily Breakdown ── #}
+<div class="tab-panel" id="tab-daily"
+     {% if active_view != 'daily' %}style="display:none;"{% endif %}>
 <div class="panel">
     <h2>Daily Hours Breakdown</h2>
+    {% if daily_breakdown %}
     {% for emp in daily_breakdown %}
     <div class="user-missing-block">
         <button class="accordion-button" onclick="toggleInner('emp{{ loop.index }}')">
@@ -180,15 +196,17 @@
         </div>
     </div>
     {% endfor %}
+    {% else %}
+    <p style="color:#aaa;">No entries for this period.</p>
+    {% endif %}
 </div>
-{% endif %}
+</div>
 
-{# ── Summary Table ── #}
-{% if summary %}
+{# ── Hours Summary ── #}
+<div class="tab-panel" id="tab-summary"
+     {% if active_view != 'summary' %}style="display:none;"{% endif %}>
 <div class="panel">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-        <h2 style="margin:0;border:none;padding:0;">Hours Summary</h2>
-    </div>
+    <h2>Hours Summary</h2>
     <table>
         <thead>
             <tr><th>User</th><th>Show</th><th>Work Code</th><th>Total Hours</th></tr>
@@ -203,17 +221,24 @@
                 <td><strong>{{ s.total_hours }}</strong></td>
             </tr>
             {% else %}
-            <tr><td colspan="4" style="color:#aaa;text-align:center;">No summary data.</td></tr>
+            <tr><td colspan="4" style="color:#aaa;text-align:center;">No data.</td></tr>
             {% endfor %}
         </tbody>
     </table>
 </div>
-{% endif %}
+</div>
 
 {# ── Detailed Log ── #}
-{% if entries %}
+<div class="tab-panel" id="tab-detailed"
+     {% if active_view != 'detailed' %}style="display:none;"{% endif %}>
 <div class="panel">
-    <h2>Detailed Log</h2>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <h2 style="margin:0;border:none;padding:0;">Detailed Log</h2>
+        <span style="font-size:13px;color:#888;">
+            {{ total_entries }} entr{% if total_entries != 1 %}ies{% else %}y{% endif %}
+            {% if total_pages > 1 %}· page {{ page }} of {{ total_pages }}{% endif %}
+        </span>
+    </div>
     <table>
         <thead>
             <tr><th>User</th><th>Date</th><th>Show</th><th>Work Code</th><th>Hours</th><th>Notes</th><th style="width:100px;">Actions</th></tr>
@@ -238,103 +263,231 @@
                        onclick="return confirm('Delete this entry for {{ e.name }} on {{ e.work_date }}?')">🗑 Delete</a>
                 </td>
             </tr>
+            {% else %}
+            <tr><td colspan="7" style="color:#aaa;text-align:center;">No entries.</td></tr>
             {% endfor %}
         </tbody>
     </table>
-</div>
-{% endif %}
 
-{% if not from_date %}
-<div class="panel" style="text-align:center;color:#aaa;padding:40px;">
-    <p style="font-size:16px;">Select a period above to view the report.</p>
+    {# ── Pagination ── #}
+    {% if total_pages > 1 %}
+    <div class="pagination">
+        {% if page > 1 %}
+        <a class="page-btn"
+           href="{{ url_for('reports', report_type=report_type, from_date=from_date, to_date=to_date, user_id=request.args.get('user_id',''), show_id=request.args.get('show_id',''), work_code_id=request.args.get('work_code_id',''), page=page-1, active_view='detailed') }}">
+           ‹ Prev
+        </a>
+        {% else %}
+        <span class="page-btn disabled">‹ Prev</span>
+        {% endif %}
+
+        <span class="page-info">{{ page }} / {{ total_pages }}</span>
+
+        {% if page < total_pages %}
+        <a class="page-btn"
+           href="{{ url_for('reports', report_type=report_type, from_date=from_date, to_date=to_date, user_id=request.args.get('user_id',''), show_id=request.args.get('show_id',''), work_code_id=request.args.get('work_code_id',''), page=page+1, active_view='detailed') }}">
+           Next ›
+        </a>
+        {% else %}
+        <span class="page-btn disabled">Next ›</span>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+</div>
+
+{% else %}
+<div class="panel" style="text-align:center;color:#aaa;padding:48px 20px;">
+    <p style="font-size:16px;margin-bottom:8px;">Set a date range above and click <strong>Run Report</strong>.</p>
+    <p style="font-size:13px;">Use the quick shortcuts to jump to this week, month, or last month.</p>
 </div>
 {% endif %}
 
 <style>
-.report-quick-bar {
-    display:flex;
-    gap:10px;
-    flex-wrap:wrap;
-    margin-bottom:20px;
+/* ── Filter panel shortcuts ─────────────────────────────── */
+.quick-shortcuts {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid #f0f2f5;
 }
-.quick-btn {
-    display:inline-block;
-    padding:9px 18px;
-    border-radius:6px;
-    font-size:14px;
-    font-weight:600;
-    text-decoration:none;
-    background:#fff;
-    color:#555;
-    border:1px solid #dde1ea;
-    transition:background 0.15s, color 0.15s;
-    cursor:pointer;
+.shortcut-btn {
+    padding: 5px 12px;
+    border: 1px solid #dde1ea;
+    border-radius: 5px;
+    background: #f5f7fa;
+    color: #555;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
 }
-.quick-btn:hover { background:#f0f4ff; color:#4a86e8; border-color:#4a86e8; }
-.quick-btn.active { background:#4a86e8; color:#fff; border-color:#4a86e8; }
-.quick-btn.export-btn { background:#e8f5e9; color:#2e7d32; border-color:#a5d6a7; margin-left:auto; }
-.quick-btn.export-btn:hover { background:#c8e6c9; }
+.shortcut-btn:hover { background: #e8f0fe; color: #4a86e8; border-color: #4a86e8; }
 
+.export-btn {
+    background: #e8f5e9; color: #2e7d32;
+    border: 1px solid #a5d6a7;
+    padding: 9px 18px; border-radius: 6px;
+    font-size: 14px; font-weight: 600;
+    text-decoration: none;
+}
+.export-btn:hover { background: #c8e6c9; }
 
+/* ── Period label ───────────────────────────────────────── */
 .period-label {
-    font-size:13px;
-    color:#666;
-    margin-bottom:16px;
-    background:#f5f7fa;
-    padding:10px 16px;
-    border-radius:6px;
+    font-size: 13px; color: #666;
+    margin-bottom: 16px;
+    background: #f5f7fa;
+    padding: 10px 16px;
+    border-radius: 6px;
 }
 
+/* ── View tabs ──────────────────────────────────────────── */
+.view-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 0;
+    border-bottom: 2px solid #dde1ea;
+    padding-bottom: 0;
+}
+.view-tab {
+    padding: 10px 20px;
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-radius: 6px 6px 0 0;
+    background: #f5f7fa;
+    color: #666;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    position: relative;
+    bottom: -2px;
+}
+.view-tab:hover { background: #e8edf5; color: #333; }
+.view-tab.active {
+    background: #fff;
+    color: #1a2236;
+    border-color: #dde1ea;
+    border-bottom-color: #fff;
+}
+.tab-count {
+    display: inline-block;
+    background: #e8f0fe;
+    color: #1a73e8;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 1px 7px;
+    border-radius: 10px;
+    margin-left: 5px;
+}
+.tab-count.red { background: #ffebee; color: #d32f2f; }
+
+.tab-panel > .panel { border-radius: 0 6px 6px 6px; margin-top: 0; }
+
+/* ── Missing / Daily pills ──────────────────────────────── */
 .missing-pill {
-    background:#ffebee;
-    color:#d32f2f;
-    font-size:12px;
-    font-weight:700;
-    padding:2px 10px;
-    border-radius:12px;
-    margin-left:10px;
+    background: #ffebee; color: #d32f2f;
+    font-size: 12px; font-weight: 700;
+    padding: 2px 10px; border-radius: 12px; margin-left: 10px;
 }
 .emp-total-pill {
-    background:#e8f0fe;
-    color:#1a73e8;
-    font-size:12px;
-    font-weight:700;
-    padding:2px 10px;
-    border-radius:12px;
-    margin-left:10px;
+    background: #e8f0fe; color: #1a73e8;
+    font-size: 12px; font-weight: 700;
+    padding: 2px 10px; border-radius: 12px; margin-left: 10px;
 }
 
+/* ── Action buttons (detailed log) ─────────────────────── */
 .action-btn {
-    display:inline-block;
-    padding:3px 9px;
-    border-radius:4px;
-    font-size:12px;
-    font-weight:600;
-    text-decoration:none;
-    margin-right:4px;
-    transition:background 0.15s;
+    display: inline-block; padding: 3px 9px; border-radius: 4px;
+    font-size: 12px; font-weight: 600; text-decoration: none;
+    margin-right: 4px; transition: background 0.15s;
 }
-.edit-btn   { background:#e8f0fe; color:#1a73e8; border:1px solid #c5d8fb; }
-.edit-btn:hover   { background:#d2e3fc; }
-.delete-btn { background:#fce8e6; color:#d32f2f; border:1px solid #f5b7b1; }
-.delete-btn:hover { background:#f5c6c2; }
+.edit-btn   { background: #e8f0fe; color: #1a73e8; border: 1px solid #c5d8fb; }
+.edit-btn:hover   { background: #d2e3fc; }
+.delete-btn { background: #fce8e6; color: #d32f2f; border: 1px solid #f5b7b1; }
+.delete-btn:hover { background: #f5c6c2; }
+
+/* ── Pagination ─────────────────────────────────────────── */
+.pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 16px 0 4px;
+}
+.page-btn {
+    padding: 7px 18px;
+    border: 1px solid #dde1ea;
+    border-radius: 6px;
+    background: #fff;
+    color: #4a86e8;
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+    transition: background 0.15s;
+}
+.page-btn:hover { background: #e8f0fe; }
+.page-btn.disabled { color: #ccc; cursor: default; pointer-events: none; }
+.page-info { font-size: 13px; color: #888; font-weight: 600; }
 </style>
 
 <script>
+// ── Tab switching ─────────────────────────────────────────
+function switchTab(name) {
+    document.querySelectorAll(".tab-panel").forEach(p => p.style.display = "none");
+    document.querySelectorAll(".view-tab").forEach(t => t.classList.remove("active"));
+    const panel = document.getElementById("tab-" + name);
+    if (panel) panel.style.display = "block";
+    const btn = document.querySelector(`.view-tab[onclick="switchTab('${name}')"]`);
+    if (btn) btn.classList.add("active");
+    // keep activeViewInput in sync so form submissions preserve the tab
+    const inp = document.getElementById("activeViewInput");
+    if (inp) inp.value = name;
+}
+
+// ── Accordion toggles ─────────────────────────────────────
 function toggleInner(id) {
     const el = document.getElementById(id);
     if (el) el.classList.toggle("show-panel");
 }
 
-// Show custom filter if custom mode
-const reportType = "{{ report_type }}";
-if (reportType === "custom") {
-    document.getElementById("customFilter").style.display = "block";
+// ── Quick date shortcuts ──────────────────────────────────
+function setDates(from, to) {
+    const form = document.getElementById("reportForm");
+    form.querySelector('[name="from_date"]').value = from;
+    form.querySelector('[name="to_date"]').value   = to;
 }
-document.querySelector('a[href*="report_type=custom"]')?.addEventListener("click", function(e) {
-    e.preventDefault();
-    const el = document.getElementById("customFilter");
-    el.style.display = el.style.display === "none" ? "block" : "none";
-});
+
+function setThisWeek() {
+    const today = new Date();
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - (today.getDay() === 0 ? 6 : today.getDay() - 1));
+    const friday = new Date(monday);
+    friday.setDate(monday.getDate() + 4);
+    setDates(fmt(monday), fmt(friday));
+}
+
+function setThisMonth() {
+    const today = new Date();
+    const first = new Date(today.getFullYear(), today.getMonth(), 1);
+    const last  = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    setDates(fmt(first), fmt(last));
+}
+
+function setLastMonth() {
+    const today = new Date();
+    const first = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    const last  = new Date(today.getFullYear(), today.getMonth(), 0);
+    setDates(fmt(first), fmt(last));
+}
+
+function fmt(d) {
+    return d.getFullYear() + "-" +
+           String(d.getMonth() + 1).padStart(2, "0") + "-" +
+           String(d.getDate()).padStart(2, "0");
+}
 </script>
 {% endblock %}

@@ -1063,6 +1063,9 @@ def reports():
     show_id      = request.args.get("show_id", "")
     work_code_id = request.args.get("work_code_id", "")
     report_type  = request.args.get("report_type", "custom")
+    active_view  = request.args.get("active_view", "missing")
+    page         = max(1, int(request.args.get("page", 1) or 1))
+    PER_PAGE     = 100
 
     today = date.today()
     if report_type == "weekly":
@@ -1091,84 +1094,107 @@ def reports():
         base_filters += " AND t.work_code_id = ?"
         params.append(work_code_id)
 
-    conn    = get_db()
-    entries = db_execute(conn, f"""
-        SELECT t.entry_id, u.name, t.work_date,
-               s.year, s.show_code, s.show_name,
-               w.code, w.description, t.hours, t.comments
-        FROM timesheet_entries t
-        JOIN users u       ON t.user_id      = u.user_id
-        JOIN work_codes w  ON t.work_code_id = w.work_code_id
-        LEFT JOIN shows s  ON t.show_id      = s.show_id
-        WHERE 1=1 {base_filters}
-        ORDER BY t.work_date DESC, u.name, s.show_code, w.code
-    """, params).fetchall()
-
-    summary = db_execute(conn, f"""
-        SELECT u.name, s.show_code, s.show_name, w.code, SUM(t.hours) AS total_hours
-        FROM timesheet_entries t
-        JOIN users u       ON t.user_id      = u.user_id
-        JOIN work_codes w  ON t.work_code_id = w.work_code_id
-        LEFT JOIN shows s  ON t.show_id      = s.show_id
-        WHERE 1=1 {base_filters}
-        GROUP BY u.name, s.show_code, s.show_name, w.code
-        ORDER BY u.name, s.show_code, w.code
-    """, params).fetchall()
-
+    conn           = get_db()
+    entries        = []
+    total_entries  = 0
+    total_pages    = 0
+    summary        = []
     missing_report = []
-    if from_date and to_date:
-        all_users = db_execute(conn,
-            "SELECT user_id, name FROM users WHERE role = 'user' ORDER BY name"
-        ).fetchall()
-        fd = datetime.strptime(from_date, "%Y-%m-%d").date()
-        td = datetime.strptime(to_date,   "%Y-%m-%d").date()
-        working_days = []
-        d = fd
-        while d <= td:
-            if d.weekday() < 5:
-                working_days.append(d)
-            d += timedelta(days=1)
+    daily_breakdown = []
 
-        for u in all_users:
-            rows = db_execute(conn, """
-                SELECT work_date, COALESCE(SUM(hours), 0) AS total_hours
-                FROM timesheet_entries
-                WHERE user_id = ? AND work_date BETWEEN ? AND ?
-                GROUP BY work_date
-            """, (u["user_id"], from_date, to_date)).fetchall()
-            totals       = {r["work_date"]: r["total_hours"] for r in rows}
-            missing_days = []
-            for wd in working_days:
-                hrs = totals.get(wd.isoformat(), 0)
-                if hrs < 8:
-                    missing_days.append({"date": wd.isoformat(), "day_name": wd.strftime("%A"),
-                                         "entered": hrs, "missing": round(8 - hrs, 2)})
-            if missing_days:
-                missing_report.append({"name": u["name"], "user_id": u["user_id"],
-                    "missing_days": missing_days,
-                    "total_missing": sum(d["missing"] for d in missing_days)})
+    if from_date:
+        # ── Paginated detailed log ────────────────────────────────────────────
+        count_row = db_execute(conn, f"""
+            SELECT COUNT(*) AS cnt
+            FROM timesheet_entries t
+            JOIN users u      ON t.user_id      = u.user_id
+            JOIN work_codes w ON t.work_code_id = w.work_code_id
+            LEFT JOIN shows s ON t.show_id      = s.show_id
+            WHERE 1=1 {base_filters}
+        """, params).fetchone()
+        total_entries = count_row["cnt"]
+        total_pages   = max(1, (total_entries + PER_PAGE - 1) // PER_PAGE)
+        page          = min(page, total_pages)
 
-    # ── Daily totals per employee ─────────────────────────────────────────────
-    daily_rows = db_execute(conn, f"""
-        SELECT u.name, t.work_date, SUM(t.hours) AS day_total
-        FROM timesheet_entries t
-        JOIN users u ON t.user_id = u.user_id
-        WHERE 1=1 {base_filters}
-        GROUP BY u.name, t.work_date
-        ORDER BY u.name ASC, t.work_date ASC
-    """, params).fetchall()
+        entries = db_execute(conn, f"""
+            SELECT t.entry_id, u.name, t.work_date,
+                   s.year, s.show_code, s.show_name,
+                   w.code, w.description, t.hours, t.comments
+            FROM timesheet_entries t
+            JOIN users u       ON t.user_id      = u.user_id
+            JOIN work_codes w  ON t.work_code_id = w.work_code_id
+            LEFT JOIN shows s  ON t.show_id      = s.show_id
+            WHERE 1=1 {base_filters}
+            ORDER BY t.work_date DESC, u.name, s.show_code, w.code
+            LIMIT ? OFFSET ?
+        """, params + [PER_PAGE, (page - 1) * PER_PAGE]).fetchall()
 
-    emp_days = {}
-    for r in daily_rows:
-        emp_days.setdefault(r["name"], []).append({
-            "date":     r["work_date"],
-            "day_name": datetime.strptime(r["work_date"], "%Y-%m-%d").strftime("%a"),
-            "hours":    r["day_total"],
-        })
-    daily_breakdown = [
-        {"name": name, "days": days, "total": round(sum(d["hours"] for d in days), 2)}
-        for name, days in emp_days.items()
-    ]
+        # ── Hours summary (by show / work code) ───────────────────────────────
+        summary = db_execute(conn, f"""
+            SELECT u.name, s.show_code, s.show_name, w.code, SUM(t.hours) AS total_hours
+            FROM timesheet_entries t
+            JOIN users u       ON t.user_id      = u.user_id
+            JOIN work_codes w  ON t.work_code_id = w.work_code_id
+            LEFT JOIN shows s  ON t.show_id      = s.show_id
+            WHERE 1=1 {base_filters}
+            GROUP BY u.name, s.show_code, s.show_name, w.code
+            ORDER BY u.name, s.show_code, w.code
+        """, params).fetchall()
+
+        # ── Missing entries ───────────────────────────────────────────────────
+        if to_date:
+            all_users = db_execute(conn,
+                "SELECT user_id, name FROM users WHERE role = 'user' ORDER BY name"
+            ).fetchall()
+            fd = datetime.strptime(from_date, "%Y-%m-%d").date()
+            td = datetime.strptime(to_date,   "%Y-%m-%d").date()
+            working_days = []
+            d = fd
+            while d <= td:
+                if d.weekday() < 5:
+                    working_days.append(d)
+                d += timedelta(days=1)
+
+            for u in all_users:
+                rows = db_execute(conn, """
+                    SELECT work_date, COALESCE(SUM(hours), 0) AS total_hours
+                    FROM timesheet_entries
+                    WHERE user_id = ? AND work_date BETWEEN ? AND ?
+                    GROUP BY work_date
+                """, (u["user_id"], from_date, to_date)).fetchall()
+                totals       = {r["work_date"]: r["total_hours"] for r in rows}
+                missing_days = []
+                for wd in working_days:
+                    hrs = totals.get(wd.isoformat(), 0)
+                    if hrs < 8:
+                        missing_days.append({"date": wd.isoformat(), "day_name": wd.strftime("%A"),
+                                             "entered": hrs, "missing": round(8 - hrs, 2)})
+                if missing_days:
+                    missing_report.append({"name": u["name"], "user_id": u["user_id"],
+                        "missing_days": missing_days,
+                        "total_missing": sum(d["missing"] for d in missing_days)})
+
+        # ── Daily totals per employee ─────────────────────────────────────────
+        daily_rows = db_execute(conn, f"""
+            SELECT u.name, t.work_date, SUM(t.hours) AS day_total
+            FROM timesheet_entries t
+            JOIN users u ON t.user_id = u.user_id
+            WHERE 1=1 {base_filters}
+            GROUP BY u.name, t.work_date
+            ORDER BY u.name ASC, t.work_date ASC
+        """, params).fetchall()
+
+        emp_days = {}
+        for r in daily_rows:
+            emp_days.setdefault(r["name"], []).append({
+                "date":     r["work_date"],
+                "day_name": datetime.strptime(r["work_date"], "%Y-%m-%d").strftime("%a"),
+                "hours":    r["day_total"],
+            })
+        daily_breakdown = [
+            {"name": name, "days": days, "total": round(sum(d["hours"] for d in days), 2)}
+            for name, days in emp_days.items()
+        ]
 
     users     = db_execute(conn, "SELECT user_id, name FROM users ORDER BY name").fetchall()
     show_rows = db_execute(conn,
@@ -1178,8 +1204,11 @@ def reports():
     conn.close()
 
     return render_template("reports.html",
-        entries=entries, summary=summary, missing_report=missing_report,
+        entries=entries, total_entries=total_entries,
+        total_pages=total_pages, page=page,
+        summary=summary, missing_report=missing_report,
         daily_breakdown=daily_breakdown,
+        active_view=active_view,
         users=users, shows=show_rows, codes=codes,
         from_date=from_date, to_date=to_date, report_type=report_type)
 
