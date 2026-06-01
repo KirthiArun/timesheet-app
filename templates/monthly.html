@@ -15,8 +15,8 @@
 {# ── Month Progress Bar ── #}
 <div class="month-progress-bar">
     <div class="mpb-header">
-        <span>{{ month_logged }} / {{ month_required }} hrs logged this month</span>
-        <span class="mpb-pct">{{ progress_pct }}%</span>
+        <span>{{ month_logged }} / {{ month_capacity }} hrs logged this month</span>
+        <span class="mpb-pct">{{ progress_pct }}% on track</span>
     </div>
     <div class="mpb-track">
         <div class="mpb-fill {% if progress_pct >= 100 %}complete{% elif progress_pct >= 60 %}good{% else %}low{% endif %}"
@@ -32,11 +32,15 @@
     <button class="week-header" onclick="toggleWeek('wentries-{{ loop.index }}')">
         <span class="week-label">{{ w.label }}</span>
         <span class="week-hours">
-            {{ w.logged }} / {{ w.required }} hrs
+            {{ w.logged }} / {{ w.capacity }} hrs
             {% if w.required > 0 and w.logged >= w.required %}
-            <span class="week-badge ok">✓ Done</span>
-            {% elif w.logged > 0 %}
+            <span class="week-badge ok">✓ On track</span>
+            {% elif w.required > 0 and w.logged > 0 %}
             <span class="week-badge partial">In progress</span>
+            {% elif w.required > 0 and w.logged == 0 %}
+            <span class="week-badge missing">Missing</span>
+            {% elif w.required == 0 %}
+            <span class="week-badge upcoming">Upcoming</span>
             {% endif %}
         </span>
     </button>
@@ -168,8 +172,10 @@
     font-size: 11px;
     font-weight: 700;
 }
-.week-badge.ok      { background: #e8f5e9; color: #2e7d32; }
-.week-badge.partial { background: #fff3e0; color: #e65100; }
+.week-badge.ok       { background: #e8f5e9; color: #2e7d32; }
+.week-badge.partial  { background: #fff3e0; color: #e65100; }
+.week-badge.missing  { background: #ffebee; color: #d32f2f; }
+.week-badge.upcoming { background: #f5f5f5; color: #9e9e9e; }
 
 /* Day grid connected to header */
 .month-day-row {

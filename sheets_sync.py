@@ -1,11 +1,12 @@
 # ============================================================
 # sheets_sync.py
-# Writes a developer's timesheet entries to the Internal Master sheet.
+# Writes a developer's timesheet entries to a Google Sheet tab.
 # Called on every save / edit / delete in app.py.
+# Also supports syncing to a separate backup sheet.
 # ============================================================
 
 import os, base64, json, sqlite3, threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -25,8 +26,8 @@ print(f"[SheetsSync] DATABASE_URL set: {bool(DATABASE_URL)}")
 
 _sheets_service      = None
 _sheets_service_lock = threading.Lock()
-_tab_id_cache        = {}       # tab_name -> sheetId
-_formatted_tabs      = set()    # tab names that already have header formatting
+_tab_id_cache        = {}       # (spreadsheet_id, tab_name) -> numeric sheetId
+_formatted_tabs      = set()    # (spreadsheet_id, tab_name) pairs already header-formatted
 
 WORK_CODE_COLUMNS = [
     "EAAEP", "EAALU", "EACRO", "EADATST", "EADMT",
@@ -83,10 +84,39 @@ def get_sheets_service():
     return _sheets_service
 
 
+# ── IST helpers ───────────────────────────────────────────────────────────────
+
+def ist_now():
+    """Current datetime in IST (UTC+5:30, no DST)."""
+    return datetime.utcnow() + timedelta(hours=5, minutes=30)
+
+def current_month_start_ist():
+    """First day of the current month in IST as a YYYY-MM-DD string."""
+    return ist_now().date().replace(day=1).isoformat()
+
+def prev_month_range_ist():
+    """(first_day, last_day) strings for the previous calendar month in IST."""
+    today_ist     = ist_now().date()
+    first_of_curr = today_ist.replace(day=1)
+    last_of_prev  = first_of_curr - timedelta(days=1)
+    first_of_prev = last_of_prev.replace(day=1)
+    return first_of_prev.isoformat(), last_of_prev.isoformat()
+
+
 # ── Data fetchers ─────────────────────────────────────────────────────────────
 
-def fetch_user_and_entries(user_id):
+def fetch_user_and_entries(user_id, from_date=None, to_date=None):
+    """
+    Fetch a user + their timesheet entries.
+    from_date defaults to first day of current month (IST).
+    to_date defaults to no upper bound (i.e. all future dates).
+    """
     conn = get_db()
+    if from_date is None:
+        from_date = current_month_start_ist()
+    if to_date is None:
+        to_date = "9999-12-31"
+
     user = db_execute(conn,
         "SELECT user_id, name, email FROM users WHERE user_id = ?", (user_id,)
     ).fetchone()
@@ -102,9 +132,9 @@ def fetch_user_and_entries(user_id):
         FROM timesheet_entries t
         JOIN work_codes w  ON t.work_code_id = w.work_code_id
         LEFT JOIN shows s  ON t.show_id      = s.show_id
-        WHERE t.user_id = ?
+        WHERE t.user_id = ? AND t.work_date >= ? AND t.work_date <= ?
         ORDER BY t.work_date ASC, s.show_code ASC
-    """, (user_id,)).fetchall()
+    """, (user_id, from_date, to_date)).fetchall()
     conn.close()
     return user, rows
 
@@ -129,7 +159,6 @@ def build_sheet_rows(tab_name, db_entries):
             grouped[key]["_notes"] = []
 
         wc = e["work_code"].strip()
-        # Match case-insensitively
         matched = next((c for c in WORK_CODE_COLUMNS if c.upper() == wc.upper()), None)
         if matched:
             grouped[key][matched] += e["hours"]
@@ -161,37 +190,39 @@ def build_sheet_rows(tab_name, db_entries):
 
 # ── Sheet operations ──────────────────────────────────────────────────────────
 
-def get_tab_sheet_id(service, tab_name):
-    if tab_name not in _tab_id_cache:
-        spreadsheet = service.spreadsheets().get(spreadsheetId=MASTER_SHEET_ID).execute()
+def get_tab_sheet_id(service, spreadsheet_id, tab_name):
+    """Return the numeric sheetId for tab_name inside spreadsheet_id (cached)."""
+    cache_key = (spreadsheet_id, tab_name)
+    if cache_key not in _tab_id_cache:
+        spreadsheet = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
         for sheet in spreadsheet.get("sheets", []):
-            _tab_id_cache[sheet["properties"]["title"]] = sheet["properties"]["sheetId"]
-    if tab_name not in _tab_id_cache:
-        raise ValueError(f"Tab '{tab_name}' not found in master sheet. Run 1_create_and_share.js first.")
-    return _tab_id_cache[tab_name]
+            _tab_id_cache[(spreadsheet_id, sheet["properties"]["title"])] = sheet["properties"]["sheetId"]
+    if cache_key not in _tab_id_cache:
+        raise ValueError(f"Tab '{tab_name}' not found in spreadsheet {spreadsheet_id}.")
+    return _tab_id_cache[cache_key]
 
 
-def clear_tab(service, tab_name):
+def clear_tab(service, spreadsheet_id, tab_name):
     service.spreadsheets().values().clear(
-        spreadsheetId=MASTER_SHEET_ID,
+        spreadsheetId=spreadsheet_id,
         range=f"'{tab_name}'!A:T"
     ).execute()
 
 
-def write_rows(service, tab_name, rows):
+def write_rows(service, spreadsheet_id, tab_name, rows):
     service.spreadsheets().values().update(
-        spreadsheetId=MASTER_SHEET_ID,
+        spreadsheetId=spreadsheet_id,
         range=f"'{tab_name}'!A1",
         valueInputOption="USER_ENTERED",
         body={"values": rows}
     ).execute()
 
 
-def format_header(service, sheet_id):
+def format_header(service, spreadsheet_id, numeric_sheet_id):
     requests = [{
         "repeatCell": {
             "range": {
-                "sheetId": sheet_id,
+                "sheetId": numeric_sheet_id,
                 "startRowIndex": 0, "endRowIndex": 1,
                 "startColumnIndex": 0, "endColumnIndex": 20
             },
@@ -205,34 +236,43 @@ def format_header(service, sheet_id):
         }
     }]
     service.spreadsheets().batchUpdate(
-        spreadsheetId=MASTER_SHEET_ID,
+        spreadsheetId=spreadsheet_id,
         body={"requests": requests}
     ).execute()
 
 
 # ── Main sync function ────────────────────────────────────────────────────────
 
-def sync_user_to_sheet(user_id):
+def sync_user_to_sheet(user_id, spreadsheet_id=None, from_date=None, to_date=None):
+    """
+    Sync a user's entries to a sheet tab.
+    - spreadsheet_id: defaults to MASTER_SHEET_ID (the live sheet)
+    - from_date / to_date: date range; from_date defaults to current month start (IST)
+    """
+    if spreadsheet_id is None:
+        spreadsheet_id = MASTER_SHEET_ID
+
     try:
-        user, db_entries = fetch_user_and_entries(user_id)
+        user, db_entries = fetch_user_and_entries(user_id, from_date=from_date, to_date=to_date)
         if not user:
             return False, f"User {user_id} not found in DB"
 
-        tab_name = user["name"].strip()
-        service  = get_sheets_service()
-        sheet_id = get_tab_sheet_id(service, tab_name)
-        rows     = build_sheet_rows(tab_name, db_entries)
+        tab_name        = user["name"].strip()
+        service         = get_sheets_service()
+        numeric_tab_id  = get_tab_sheet_id(service, spreadsheet_id, tab_name)
+        rows            = build_sheet_rows(tab_name, db_entries)
 
-        clear_tab(service, tab_name)
-        write_rows(service, tab_name, rows)
+        clear_tab(service, spreadsheet_id, tab_name)
+        write_rows(service, spreadsheet_id, tab_name, rows)
 
-        if tab_name not in _formatted_tabs:
-            format_header(service, sheet_id)
-            _formatted_tabs.add(tab_name)
+        fmt_key = (spreadsheet_id, tab_name)
+        if fmt_key not in _formatted_tabs:
+            format_header(service, spreadsheet_id, numeric_tab_id)
+            _formatted_tabs.add(fmt_key)
 
         # Verify row count matches
         verify = service.spreadsheets().values().get(
-            spreadsheetId=MASTER_SHEET_ID,
+            spreadsheetId=spreadsheet_id,
             range=f"'{tab_name}'!A:A"
         ).execute()
         sheet_count = len(verify.get("values", [])) - 1  # subtract header
@@ -242,7 +282,9 @@ def sync_user_to_sheet(user_id):
             print(f"[SheetsSync] ⚠️ Count mismatch for {tab_name}: DB={db_count} Sheet={sheet_count} — will retry")
             return False, f"Count mismatch: DB={db_count} Sheet={sheet_count}"
 
-        print(f"[SheetsSync] ✅ Synced {tab_name} — {db_count} row(s) verified")
+        dest  = "backup" if spreadsheet_id != MASTER_SHEET_ID else "master"
+        label = from_date[:7] if from_date else current_month_start_ist()[:7]
+        print(f"[SheetsSync] ✅ Synced {tab_name} → {dest} sheet ({label}) — {db_count} row(s) verified")
         return True, None
 
     except Exception as e:

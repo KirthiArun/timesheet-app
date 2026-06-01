@@ -67,6 +67,34 @@ def db_execute(conn, sql, params=()):
         return cur
     return conn.execute(sql, params)
 
+def get_setting(key, default=""):
+    conn = get_db()
+    row  = db_execute(conn, "SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+    conn.close()
+    return row["value"] if row else default
+
+def set_setting(key, value):
+    conn = get_db()
+    if DATABASE_URL:
+        db_execute(conn, """
+            INSERT INTO app_settings (key, value) VALUES (%s, %s)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+        """, (key, value))
+    else:
+        db_execute(conn, """
+            INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)
+        """, (key, value))
+    conn.commit()
+    conn.close()
+
+def prev_month_range_ist():
+    """(first_day_str, last_day_str) for the previous calendar month in IST."""
+    today_ist     = (datetime.utcnow() + timedelta(hours=5, minutes=30)).date()
+    first_of_curr = today_ist.replace(day=1)
+    last_of_prev  = first_of_curr - timedelta(days=1)
+    first_of_prev = last_of_prev.replace(day=1)
+    return first_of_prev.isoformat(), last_of_prev.isoformat()
+
 def column_exists(conn, table_name, column_name):
     if DATABASE_URL:
         with conn.cursor() as cur:
@@ -152,6 +180,11 @@ def init_db():
             is_read           TEXT NOT NULL DEFAULT 'N',
             created_at        TEXT NOT NULL
         )""")
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL DEFAULT ''
+        )""")
 
     else:
         cur.execute("""
@@ -213,6 +246,11 @@ def init_db():
             notification_type TEXT NOT NULL DEFAULT 'warning',
             is_read TEXT NOT NULL DEFAULT 'N', created_at TEXT NOT NULL,
             FOREIGN KEY(user_id) REFERENCES users(user_id)
+        )""")
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL DEFAULT ''
         )""")
 
     # Seed admin user
@@ -932,7 +970,8 @@ def monthly():
         week_days    = []
         flat_entries = []
         week_logged  = 0
-        week_req     = 0
+        week_cap     = 0   # full week capacity (all working days in month)
+        week_req     = 0   # elapsed working days only (for on-track badge)
 
         for i in range(5):
             d = w_start + timedelta(days=i)
@@ -942,8 +981,9 @@ def monthly():
                 continue
 
             total = day_totals.get(d.isoformat(), 0)
+            week_cap += 8               # always accumulate full capacity
             if d <= today:
-                week_req += 8
+                week_req += 8           # only elapsed days count as "required"
             week_logged += total
 
             if d > today:
@@ -976,20 +1016,28 @@ def monthly():
                 "days":       week_days,
                 "entries":    flat_entries,
                 "logged":     week_logged,
-                "required":   week_req,
+                "capacity":   week_cap,   # shown in header (full week)
+                "required":   week_req,   # used for on-track badge
                 "is_current": w_start == cur_monday,
             })
 
         w_start += timedelta(days=7)
 
-    # Month totals — only count working days up to today
-    month_logged   = sum(day_totals.values())
-    wk_days_so_far = sum(
+    # Month totals
+    month_logged = sum(day_totals.values())
+
+    # Full month capacity (all working days regardless of date)
+    month_capacity = sum(
+        1 for i in range((last_day - first_day).days + 1)
+        if (first_day + timedelta(days=i)).weekday() < 5
+    ) * 8
+
+    # Elapsed working days (for progress % — are you on track?)
+    month_required = sum(
         1 for i in range((min(last_day, today) - first_day).days + 1)
         if (first_day + timedelta(days=i)).weekday() < 5
-    )
-    month_required = wk_days_so_far * 8
-    progress_pct   = min(100, round(month_logged / month_required * 100)) if month_required else 0
+    ) * 8
+    progress_pct = min(100, round(month_logged / month_required * 100)) if month_required else 0
 
     return render_template("monthly.html",
         month_label    = first_day.strftime("%B %Y"),
@@ -997,6 +1045,7 @@ def monthly():
         next_month     = next_month,
         weeks          = weeks,
         month_logged   = month_logged,
+        month_capacity = month_capacity,
         month_required = month_required,
         progress_pct   = progress_pct,
     )
@@ -1099,6 +1148,28 @@ def reports():
                     "missing_days": missing_days,
                     "total_missing": sum(d["missing"] for d in missing_days)})
 
+    # ── Daily totals per employee ─────────────────────────────────────────────
+    daily_rows = db_execute(conn, f"""
+        SELECT u.name, t.work_date, SUM(t.hours) AS day_total
+        FROM timesheet_entries t
+        JOIN users u ON t.user_id = u.user_id
+        WHERE 1=1 {base_filters}
+        GROUP BY u.name, t.work_date
+        ORDER BY u.name ASC, t.work_date ASC
+    """, params).fetchall()
+
+    emp_days = {}
+    for r in daily_rows:
+        emp_days.setdefault(r["name"], []).append({
+            "date":     r["work_date"],
+            "day_name": datetime.strptime(r["work_date"], "%Y-%m-%d").strftime("%a"),
+            "hours":    r["day_total"],
+        })
+    daily_breakdown = [
+        {"name": name, "days": days, "total": round(sum(d["hours"] for d in days), 2)}
+        for name, days in emp_days.items()
+    ]
+
     users     = db_execute(conn, "SELECT user_id, name FROM users ORDER BY name").fetchall()
     show_rows = db_execute(conn,
         "SELECT show_id, year, show_code, show_name FROM shows ORDER BY year, show_code, show_name"
@@ -1108,6 +1179,7 @@ def reports():
 
     return render_template("reports.html",
         entries=entries, summary=summary, missing_report=missing_report,
+        daily_breakdown=daily_breakdown,
         users=users, shows=show_rows, codes=codes,
         from_date=from_date, to_date=to_date, report_type=report_type)
 
@@ -1201,7 +1273,8 @@ def admin_users():
     conn  = get_db()
     users = db_execute(conn, "SELECT user_id, name, email, role, team, description, rate_per_hour, hike FROM users ORDER BY team, name").fetchall()
     conn.close()
-    return render_template("admin_users.html", users=users)
+    return render_template("admin_users.html", users=users,
+                           backup_sheet_id=get_setting("backup_sheet_id"))
 
 
 @app.route("/admin/users/add", methods=["POST"])
@@ -1322,9 +1395,51 @@ def admin_sync_user(user_id):
         flash("User not found.", "error")
         return redirect(url_for("admin_users"))
     do_sheets_sync(user_id)
-    flash(f"Re-sync triggered for {user['name']}.", "success")
+    flash(f"Sync to live sheet triggered for {user['name']}.", "success")
     return redirect(url_for("admin_users"))
 
+
+@app.route("/admin/users/sync-backup/<int:user_id>")
+@login_required
+@admin_required
+def admin_sync_user_backup(user_id):
+    if not SHEETS_SYNC_ENABLED:
+        flash("Google Sheets sync is not configured.", "error")
+        return redirect(url_for("admin_users"))
+
+    backup_id = get_setting("backup_sheet_id")
+    if not backup_id:
+        flash("No backup sheet ID saved. Paste it in the Backup Sheet panel first.", "error")
+        return redirect(url_for("admin_users"))
+
+    conn = get_db()
+    user = db_execute(conn, "SELECT name FROM users WHERE user_id=?", (user_id,)).fetchone()
+    conn.close()
+    if not user:
+        flash("User not found.", "error")
+        return redirect(url_for("admin_users"))
+
+    prev_start, prev_end = prev_month_range_ist()
+    ok, err = sync_user_to_sheet(user_id, spreadsheet_id=backup_id,
+                                 from_date=prev_start, to_date=prev_end)
+    if ok:
+        flash(f"Backup sync complete for {user['name']} ({prev_start[:7]}).", "success")
+    else:
+        flash(f"Backup sync failed for {user['name']}: {err}", "error")
+    return redirect(url_for("admin_users"))
+
+
+@app.route("/admin/settings/backup-sheet", methods=["POST"])
+@login_required
+@admin_required
+def admin_save_backup_sheet():
+    sheet_id = request.form.get("backup_sheet_id", "").strip()
+    set_setting("backup_sheet_id", sheet_id)
+    if sheet_id:
+        flash("Backup sheet ID saved.", "success")
+    else:
+        flash("Backup sheet ID cleared.", "success")
+    return redirect(url_for("admin_users"))
 
 
 # ── Vacation Notification ─────────────────────────────────────────────────────

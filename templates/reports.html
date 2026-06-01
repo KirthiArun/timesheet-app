@@ -134,6 +134,55 @@
 </div>
 {% endif %}
 
+{# ── Daily Breakdown by Employee ── #}
+{% if daily_breakdown %}
+<div class="panel">
+    <h2>Daily Hours Breakdown</h2>
+    {% for emp in daily_breakdown %}
+    <div class="user-missing-block">
+        <button class="accordion-button" onclick="toggleInner('emp{{ loop.index }}')">
+            <span>{{ emp.name }}</span>
+            <span class="emp-total-pill">{{ emp.total }} hrs total</span>
+        </button>
+        <div class="user-days" id="emp{{ loop.index }}">
+            <table>
+                <thead>
+                    <tr><th>Date</th><th>Day</th><th>Hours</th><th>Status</th></tr>
+                </thead>
+                <tbody>
+                    {% for d in emp.days %}
+                    <tr>
+                        <td style="white-space:nowrap;">{{ d.date }}</td>
+                        <td>{{ d.day_name }}</td>
+                        <td style="font-weight:600;{% if d.hours < 8 %}color:#d32f2f;{% elif d.hours == 8 %}color:#43a047;{% else %}color:#e65100;{% endif %}">
+                            {{ d.hours }} hrs
+                        </td>
+                        <td style="font-size:12px;">
+                            {% if d.hours >= 8 %}
+                            <span style="color:#43a047;">✓ Complete</span>
+                            {% elif d.hours > 0 %}
+                            <span style="color:#e65100;">⚠ Partial ({{ (8 - d.hours)|round(2) }} short)</span>
+                            {% else %}
+                            <span style="color:#d32f2f;">✗ Missing</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr style="background:#f5f7fa;">
+                        <td colspan="2" style="font-weight:700;padding:8px 12px;">Total</td>
+                        <td style="font-weight:700;padding:8px 12px;">{{ emp.total }} hrs</td>
+                        <td></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
 {# ── Summary Table ── #}
 {% if summary %}
 <div class="panel">
@@ -239,6 +288,15 @@
 .missing-pill {
     background:#ffebee;
     color:#d32f2f;
+    font-size:12px;
+    font-weight:700;
+    padding:2px 10px;
+    border-radius:12px;
+    margin-left:10px;
+}
+.emp-total-pill {
+    background:#e8f0fe;
+    color:#1a73e8;
     font-size:12px;
     font-weight:700;
     padding:2px 10px;
