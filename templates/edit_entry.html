@@ -9,6 +9,7 @@
 
 <div class="form-panel">
     <form method="POST" id="editForm" class="timesheet-form">
+        <input type="hidden" name="next" value="{{ next_url }}">
 
         <div class="form-row-top">
 
@@ -80,7 +81,7 @@
 
         <div class="form-row-submit">
             <button type="submit" id="saveBtn">Update Entry</button>
-            <a class="button-light" href="{{ url_for('timesheet') }}">Cancel</a>
+            <a class="button-light" href="{{ next_url }}">Cancel</a>
             <span id="formError" class="form-error" style="display:none;"></span>
         </div>
 

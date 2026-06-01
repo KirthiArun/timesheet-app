@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-header">
+    <div>
+        <h1>Monthly View</h1>
+        <p>{{ month_label }}</p>
+    </div>
+    <div>
+        <a class="button-light" href="{{ url_for('monthly', month=prev_month) }}">‹ Prev</a>
+        <a class="button-link"  href="{{ url_for('monthly', month=next_month) }}">Next ›</a>
+    </div>
+</div>
+
+{# ── Month Progress Bar ── #}
+<div class="month-progress-bar">
+    <div class="mpb-header">
+        <span>{{ month_logged }} / {{ month_required }} hrs logged this month</span>
+        <span class="mpb-pct">{{ progress_pct }}%</span>
+    </div>
+    <div class="mpb-track">
+        <div class="mpb-fill {% if progress_pct >= 100 %}complete{% elif progress_pct >= 60 %}good{% else %}low{% endif %}"
+             style="width:{{ progress_pct }}%;"></div>
+    </div>
+</div>
+
+{# ── Week Blocks ── #}
+{% for w in weeks %}
+<div class="month-week-block">
+
+    {# Accordion header #}
+    <button class="week-header" onclick="toggleWeek('wentries-{{ loop.index }}')">
+        <span class="week-label">{{ w.label }}</span>
+        <span class="week-hours">
+            {{ w.logged }} / {{ w.required }} hrs
+            {% if w.required > 0 and w.logged >= w.required %}
+            <span class="week-badge ok">✓ Done</span>
+            {% elif w.logged > 0 %}
+            <span class="week-badge partial">In progress</span>
+            {% endif %}
+        </span>
+    </button>
+
+    {# Day cards row #}
+    <div class="weekly-grid month-day-row">
+        {% for d in w.days %}
+        {% if d.is_padding %}
+        <div class="day-card empty-day"></div>
+        {% else %}
+        <div class="day-card {{ d.status_class }}{% if d.is_today %} today-card{% endif %}">
+            <h3>{{ d.short_name }}</h3>
+            <p>{{ d.day_num }}</p>
+            {% if d.is_future %}
+            <strong style="font-size:18px; color:#ccc;">—</strong>
+            <span>&nbsp;</span>
+            {% else %}
+            <strong>{{ d.total }}</strong>
+            <span>{{ d.status }}</span>
+            {% if d.locked %}<small>🔒 Locked</small>{% endif %}
+            {% endif %}
+        </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+
+    {# Entries table (collapsible) #}
+    <div class="week-entries" id="wentries-{{ loop.index }}"
+         {% if w.is_current %}style="display:block;"{% endif %}>
+        {% if w.entries %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Show</th>
+                    <th>Work Code</th>
+                    <th>Hours</th>
+                    <th>Notes</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for e in w.entries %}
+                <tr>
+                    <td style="white-space:nowrap;">{{ e.work_date }}</td>
+                    <td>
+                        <span class="badge dark">{{ e.show_code or "-" }}</span>
+                        <span style="font-size:12px;color:#666;">{{ e.show_name or "" }}</span>
+                    </td>
+                    <td><span class="badge">{{ e.code }}</span></td>
+                    <td>{{ e.hours }}</td>
+                    <td style="font-size:13px;color:#555;">{{ e.comments }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="no-entries-msg">No entries logged this week.</p>
+        {% endif %}
+    </div>
+
+</div>
+{% endfor %}
+
+<style>
+/* ── Month Progress Bar ─────────────────────────────── */
+.month-progress-bar {
+    background: #fff;
+    border: 1px solid #dde1ea;
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-bottom: 24px;
+}
+.mpb-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 14px;
+    color: #555;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+.mpb-pct { color: #4a86e8; font-size: 16px; }
+.mpb-track {
+    background: #eef0f4;
+    border-radius: 6px;
+    height: 10px;
+    overflow: hidden;
+}
+.mpb-fill {
+    height: 100%;
+    border-radius: 6px;
+    min-width: 4px;
+    transition: width 0.5s ease;
+}
+.mpb-fill.complete { background: #43a047; }
+.mpb-fill.good     { background: #4a86e8; }
+.mpb-fill.low      { background: #fb8c00; }
+
+/* ── Week Block ─────────────────────────────────────── */
+.month-week-block {
+    margin-bottom: 20px;
+}
+
+.week-header {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 11px 18px;
+    background: #f5f7fa;
+    border: 1px solid #dde1ea;
+    border-radius: 8px 8px 0 0;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    color: #333;
+    transition: background 0.15s;
+    text-align: left;
+}
+.week-header:hover { background: #e8edf5; }
+
+.week-label { font-weight: 700; color: #1a2236; }
+.week-hours { color: #666; font-weight: 500; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+
+.week-badge {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 700;
+}
+.week-badge.ok      { background: #e8f5e9; color: #2e7d32; }
+.week-badge.partial { background: #fff3e0; color: #e65100; }
+
+/* Day grid connected to header */
+.month-day-row {
+    margin-bottom: 0;
+    border-radius: 0;
+    border: 1px solid #dde1ea;
+    border-top: none;
+    padding: 10px;
+    background: #fafbfc;
+    gap: 8px;
+}
+.day-card.empty-day {
+    background: transparent;
+    box-shadow: none;
+    border-color: transparent;
+    border-top-color: transparent;
+}
+.day-card.today-card {
+    box-shadow: 0 0 0 2px #4a86e8;
+}
+
+/* Entries table */
+.week-entries {
+    display: none;
+    background: #fff;
+    border: 1px solid #dde1ea;
+    border-top: none;
+    border-radius: 0 0 8px 8px;
+    overflow: hidden;
+}
+.week-entries table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+.week-entries table th,
+.week-entries table td {
+    padding: 9px 14px;
+    text-align: left;
+    border-bottom: 1px solid #f0f2f5;
+}
+.week-entries table th {
+    background: #f9fafc;
+    font-size: 11px;
+    font-weight: 700;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.week-entries table tr:last-child td { border-bottom: none; }
+.no-entries-msg {
+    color: #bbb;
+    padding: 12px 18px;
+    font-size: 13px;
+    margin: 0;
+}
+</style>
+
+<script>
+function toggleWeek(id) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = el.style.display === "block" ? "none" : "block";
+}
+</script>
+{% endblock %}

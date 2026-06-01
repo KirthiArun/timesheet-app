@@ -734,6 +734,12 @@ def edit_entry(entry_id):
         flash("This entry is locked.", "error")
         return redirect(url_for("timesheet"))
 
+    # Resolve where to go after save/cancel.
+    # GET: from query string. POST: from hidden form field.
+    # Must be a relative URL to prevent open-redirect attacks.
+    raw_next = request.args.get("next") or request.form.get("next", "")
+    next_url = raw_next if (raw_next and raw_next.startswith("/")) else url_for("timesheet")
+
     if request.method == "POST":
         work_date    = request.form["work_date"]
         show_id      = request.form["show_id"]
@@ -762,15 +768,17 @@ def edit_entry(entry_id):
             """, (show_id, work_date, work_code_id, hours, comments, now, entry_id))
             conn.commit()
             conn.close()
-            validate_day(session["user_id"], work_date)
-            do_sheets_sync(session["user_id"])
+            # Always use the entry owner's user_id — not the session user —
+            # so admin edits sync the correct employee's sheet.
+            validate_day(entry["user_id"], work_date)
+            do_sheets_sync(entry["user_id"])
             flash("Entry updated.", "success")
-            return redirect(url_for("timesheet"))
+            return redirect(next_url)
 
     shows      = db_execute(conn, "SELECT * FROM shows WHERE active_flag = 'Y' ORDER BY year, show_code, show_name").fetchall()
     work_codes = get_show_work_codes(conn, entry["show_id"])
     conn.close()
-    return render_template("edit_entry.html", entry=entry, shows=shows, work_codes=work_codes)
+    return render_template("edit_entry.html", entry=entry, shows=shows, work_codes=work_codes, next_url=next_url)
 
 
 @app.route("/delete-entry/<int:entry_id>")
@@ -855,6 +863,143 @@ def weekly():
         monday=monday, sunday=friday, days=days, entries=entries,
         prev_week=(monday - timedelta(days=7)).isoformat(),
         next_week=(monday + timedelta(days=7)).isoformat())
+
+
+# ── Routes: Monthly View ──────────────────────────────────────────────────────
+
+@app.route("/monthly")
+@login_required
+def monthly():
+    if session.get("role") == "admin":
+        flash("Admins use Dashboard and Reports.", "error")
+        return redirect(url_for("dashboard"))
+
+    month_param = request.args.get("month")
+    today       = date.today()
+
+    if month_param:
+        try:
+            first_day = datetime.strptime(month_param + "-01", "%Y-%m-%d").date()
+        except ValueError:
+            first_day = today.replace(day=1)
+    else:
+        first_day = today.replace(day=1)
+
+    # Last day of this month
+    if first_day.month == 12:
+        last_day = date(first_day.year + 1, 1, 1) - timedelta(days=1)
+    else:
+        last_day = date(first_day.year, first_day.month + 1, 1) - timedelta(days=1)
+
+    # Prev / next month strings
+    prev_first = date(first_day.year - 1, 12, 1) if first_day.month == 1 \
+                 else date(first_day.year, first_day.month - 1, 1)
+    next_first = date(first_day.year + 1, 1, 1) if first_day.month == 12 \
+                 else date(first_day.year, first_day.month + 1, 1)
+    prev_month = prev_first.strftime("%Y-%m")
+    next_month = next_first.strftime("%Y-%m")
+
+    conn = get_db()
+    day_rows = db_execute(conn, """
+        SELECT work_date, SUM(hours) AS total_hours
+        FROM timesheet_entries
+        WHERE user_id = ? AND work_date BETWEEN ? AND ?
+        GROUP BY work_date
+    """, (session["user_id"], first_day.isoformat(), last_day.isoformat())).fetchall()
+
+    entry_rows = db_execute(conn, """
+        SELECT t.entry_id, t.work_date, t.hours, t.comments,
+               w.code, s.show_code, s.show_name
+        FROM timesheet_entries t
+        JOIN work_codes w  ON t.work_code_id = w.work_code_id
+        LEFT JOIN shows s  ON t.show_id      = s.show_id
+        WHERE t.user_id = ? AND t.work_date BETWEEN ? AND ?
+        ORDER BY t.work_date, t.entry_id
+    """, (session["user_id"], first_day.isoformat(), last_day.isoformat())).fetchall()
+    conn.close()
+
+    day_totals      = {r["work_date"]: r["total_hours"] for r in day_rows}
+    entries_by_date = {}
+    for e in entry_rows:
+        entries_by_date.setdefault(e["work_date"], []).append(e)
+
+    # Build week blocks (Mon-Fri)
+    w_start    = first_day - timedelta(days=first_day.weekday())  # Monday on/before first_day
+    cur_monday = get_monday(today)
+    weeks      = []
+
+    while w_start <= last_day:
+        week_days    = []
+        flat_entries = []
+        week_logged  = 0
+        week_req     = 0
+
+        for i in range(5):
+            d = w_start + timedelta(days=i)
+
+            if d.month != first_day.month:
+                week_days.append({"is_padding": True})
+                continue
+
+            total = day_totals.get(d.isoformat(), 0)
+            if d <= today:
+                week_req += 8
+            week_logged += total
+
+            if d > today:
+                status, cls = "—", "no-time"
+            elif total == 0:
+                status, cls = "No entry", "no-time"
+            elif total < 8:
+                status, cls = f"{total} hrs", "partial-time"
+            else:
+                status, cls = "Complete", "full-time"
+
+            week_days.append({
+                "is_padding":   False,
+                "date":         d.isoformat(),
+                "short_name":   d.strftime("%a"),
+                "day_num":      d.day,
+                "total":        total,
+                "status":       status,
+                "status_class": cls,
+                "locked":       is_locked(d.isoformat()),
+                "is_today":     d == today,
+                "is_future":    d > today,
+            })
+            flat_entries.extend(entries_by_date.get(d.isoformat(), []))
+
+        if any(not d["is_padding"] for d in week_days):
+            friday = w_start + timedelta(days=4)
+            weeks.append({
+                "label":      f"{w_start.strftime('%d %b')} – {friday.strftime('%d %b')}",
+                "days":       week_days,
+                "entries":    flat_entries,
+                "logged":     week_logged,
+                "required":   week_req,
+                "is_current": w_start == cur_monday,
+            })
+
+        w_start += timedelta(days=7)
+
+    # Month totals — only count working days up to today
+    month_logged   = sum(day_totals.values())
+    wk_days_so_far = sum(
+        1 for i in range((min(last_day, today) - first_day).days + 1)
+        if (first_day + timedelta(days=i)).weekday() < 5
+    )
+    month_required = wk_days_so_far * 8
+    progress_pct   = min(100, round(month_logged / month_required * 100)) if month_required else 0
+
+    return render_template("monthly.html",
+        month_label    = first_day.strftime("%B %Y"),
+        prev_month     = prev_month,
+        next_month     = next_month,
+        weeks          = weeks,
+        month_logged   = month_logged,
+        month_required = month_required,
+        progress_pct   = progress_pct,
+    )
 
 
 # ── Routes: Reports (Admin) ───────────────────────────────────────────────────

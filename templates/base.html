@@ -20,6 +20,7 @@
     {% if session.get("role") != "admin" %}
     <a href="{{ url_for('timesheet') }}" class="{% if request.endpoint == 'timesheet' %}active{% endif %}">My Timesheet</a>
     <a href="{{ url_for('weekly') }}" class="{% if request.endpoint == 'weekly' %}active{% endif %}">Weekly View</a>
+    <a href="{{ url_for('monthly') }}" class="{% if request.endpoint == 'monthly' %}active{% endif %}">Monthly View</a>
     <a href="{{ url_for('vacation') }}" class="{% if request.endpoint == 'vacation' %}active{% endif %}">🌴 Inform Vacation</a>
     {% endif %}
     {% if session.get("role") == "admin" %}

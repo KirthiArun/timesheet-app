@@ -167,7 +167,7 @@
     <h2>Detailed Log</h2>
     <table>
         <thead>
-            <tr><th>User</th><th>Date</th><th>Show</th><th>Work Code</th><th>Hours</th><th>Notes</th></tr>
+            <tr><th>User</th><th>Date</th><th>Show</th><th>Work Code</th><th>Hours</th><th>Notes</th><th style="width:100px;">Actions</th></tr>
         </thead>
         <tbody>
             {% for e in entries %}
@@ -181,6 +181,13 @@
                 <td><span class="badge">{{ e.code }}</span></td>
                 <td>{{ e.hours }}</td>
                 <td style="font-size:13px;color:#555;">{{ e.comments }}</td>
+                <td style="white-space:nowrap;">
+                    <a class="action-btn edit-btn"
+                       href="{{ url_for('edit_entry', entry_id=e.entry_id, next=request.url) }}">✏ Edit</a>
+                    <a class="action-btn delete-btn"
+                       href="{{ url_for('delete_entry', entry_id=e.entry_id) }}"
+                       onclick="return confirm('Delete this entry for {{ e.name }} on {{ e.work_date }}?')">🗑 Delete</a>
+                </td>
             </tr>
             {% endfor %}
         </tbody>
@@ -238,6 +245,21 @@
     border-radius:12px;
     margin-left:10px;
 }
+
+.action-btn {
+    display:inline-block;
+    padding:3px 9px;
+    border-radius:4px;
+    font-size:12px;
+    font-weight:600;
+    text-decoration:none;
+    margin-right:4px;
+    transition:background 0.15s;
+}
+.edit-btn   { background:#e8f0fe; color:#1a73e8; border:1px solid #c5d8fb; }
+.edit-btn:hover   { background:#d2e3fc; }
+.delete-btn { background:#fce8e6; color:#d32f2f; border:1px solid #f5b7b1; }
+.delete-btn:hover { background:#f5c6c2; }
 </style>
 
 <script>
