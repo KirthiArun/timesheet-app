@@ -65,9 +65,22 @@
         </div>
     </form>
     {% if backup_sheet_id %}
-    <p style="font-size:12px;color:#43a047;margin-top:10px;margin-bottom:0;">
-        ✓ Backup sheet configured for previous month.
-    </p>
+    <div style="display:flex;align-items:center;gap:16px;margin-top:12px;flex-wrap:wrap;">
+        <p style="font-size:12px;color:#43a047;margin:0;">
+            ✓ Backup sheet configured for previous month.
+        </p>
+        <a id="sync-all-btn"
+           href="{{ url_for('admin_sync_all_backup') }}"
+           onclick="return confirmSyncAll()"
+           style="display:inline-block;padding:8px 16px;background:#e65100;color:#fff;
+                  border-radius:6px;font-size:13px;font-weight:600;text-decoration:none;
+                  white-space:nowrap;">
+            ↻ Sync All to Backup
+        </a>
+        <span id="sync-all-msg" style="font-size:12px;color:#888;display:none;">
+            Syncing all users… please wait, this may take a minute.
+        </span>
+    </div>
     {% else %}
     <p style="font-size:12px;color:#fb8c00;margin-top:10px;margin-bottom:0;">
         ⚠ No backup sheet set — ↻ Backup buttons are disabled.
@@ -234,6 +247,17 @@ function confirmReset(form) {
     const pw = form.querySelector("input[name='new_password']").value.trim();
     if (!pw) return confirm("No password entered — a random one will be generated. Continue?");
     return confirm(`Reset password to "${pw}"? Share it with the user.`);
+}
+
+function confirmSyncAll() {
+    if (!confirm("Sync ALL users to the backup sheet (previous month)?\nThis may take ~1 minute.")) return false;
+    const btn = document.getElementById("sync-all-btn");
+    const msg = document.getElementById("sync-all-msg");
+    btn.style.opacity = "0.5";
+    btn.style.pointerEvents = "none";
+    btn.textContent = "Syncing…";
+    if (msg) msg.style.display = "inline";
+    return true;
 }
 </script>
 {% endblock %}

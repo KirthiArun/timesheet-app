@@ -1458,6 +1458,47 @@ def admin_sync_user_backup(user_id):
     return redirect(url_for("admin_users"))
 
 
+@app.route("/admin/users/sync-backup-all")
+@login_required
+@admin_required
+def admin_sync_all_backup():
+    if not SHEETS_SYNC_ENABLED:
+        flash("Google Sheets sync is not configured.", "error")
+        return redirect(url_for("admin_users"))
+
+    backup_id = get_setting("backup_sheet_id")
+    if not backup_id:
+        flash("No backup sheet ID saved. Paste it in the Backup Sheet panel first.", "error")
+        return redirect(url_for("admin_users"))
+
+    conn  = get_db()
+    users = db_execute(conn, "SELECT user_id, name FROM users WHERE role = 'user' ORDER BY name").fetchall()
+    conn.close()
+
+    prev_start, prev_end = prev_month_range_ist()
+    succeeded, failed = [], []
+
+    for u in users:
+        ok, err = sync_user_to_sheet(u["user_id"], spreadsheet_id=backup_id,
+                                     from_date=prev_start, to_date=prev_end)
+        if ok:
+            succeeded.append(u["name"])
+        else:
+            failed.append(f"{u['name']}: {err}")
+
+    month_label = prev_start[:7]
+    if not failed:
+        flash(f"Backup sync complete — {len(succeeded)} user(s) synced to backup ({month_label}).", "success")
+    else:
+        fail_summary = "; ".join(failed[:4])
+        if len(failed) > 4:
+            fail_summary += f" … and {len(failed) - 4} more"
+        flash(f"Backup sync ({month_label}): {len(succeeded)} ok, {len(failed)} failed — {fail_summary}",
+              "error" if not succeeded else "warning")
+
+    return redirect(url_for("admin_users"))
+
+
 @app.route("/admin/settings/backup-sheet", methods=["POST"])
 @login_required
 @admin_required
