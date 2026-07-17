@@ -91,8 +91,14 @@ def ist_now():
     return datetime.utcnow() + timedelta(hours=5, minutes=30)
 
 def current_month_start_ist():
-    """First day of the current month in IST as a YYYY-MM-DD string."""
-    return ist_now().date().replace(day=1).isoformat()
+    """First day of the current month in IST as a YYYY-MM-DD string.
+    Grace period: before 6 AM IST on the 1st, include the previous month so
+    night-shift entries logged at ~3 AM aren't wiped from the master sheet."""
+    now = ist_now()
+    if now.day == 1 and now.hour < 6:
+        last_of_prev = now.date() - timedelta(days=1)
+        return last_of_prev.replace(day=1).isoformat()
+    return now.date().replace(day=1).isoformat()
 
 def prev_month_range_ist():
     """(first_day, last_day) strings for the previous calendar month in IST."""
